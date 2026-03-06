@@ -34,11 +34,15 @@ The local platform/control-plane defaults `workflow_path` to that location and
 exports `AGENTS_MD` to the same file, so managed agents read it as their primary
 repo prompt.
 
+Relevant repo-local Symphony skills are available in `.codex/skills/`:
+`linear`, `commit`, `pull`, `push`, and `land`.
+
 Before enabling the project in Symphony or the platform registry:
 
 - confirm `tracker.project_slug` in `.symphony/WORKFLOW.md`
 - make sure the Linear workflow includes `Todo`, `In Progress`, `Human Review`,
   `Rework`, `Merging`, and terminal done/closed states
+- keep `Human Review` in `active_states`: it remains a human waiting state semantically, but Symphony uses it to keep the agent alive for automated PR review/polling and auto-return to `Rework`
 - keep `.symphony/WORKFLOW.md`, `AGENTS.md`, `README.md`, `.env.example`, and
   deploy docs aligned when the runtime or delivery contract changes
 
