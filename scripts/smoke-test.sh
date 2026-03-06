@@ -38,6 +38,16 @@ status_code="$(
 
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+    "http://127.0.0.1:${DEMO_WEB_PORT}/" \
+    | grep -q 'id="game-board"'
+
+curl --fail --silent --show-error \
+    --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+    "http://127.0.0.1:${DEMO_WEB_PORT}/version.json" \
+    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["name"] == "crowd-snake"; assert payload["version"] == "0.2.0"'
+
+curl --fail --silent --show-error \
+    --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
     "http://127.0.0.1:${DEMO_WEB_PORT}/api/state" \
     | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["bestScore"] == 0'
 

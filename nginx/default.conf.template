@@ -4,11 +4,31 @@ server {
 
     root /usr/share/nginx/html;
     index index.html;
+    etag on;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
 
     location = /_healthz {
         access_log off;
         add_header Content-Type text/plain;
         return 200 "ok";
+    }
+
+    location = /version.json {
+        include /etc/nginx/conf.d/auth/*.conf;
+        default_type application/json;
+        expires 30s;
+        add_header Cache-Control "public, max-age=30, must-revalidate" always;
+        try_files $uri =404;
+    }
+
+    location = /index.html {
+        include /etc/nginx/conf.d/auth/*.conf;
+        expires -1;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri =404;
     }
 
     location /api/ {
@@ -19,6 +39,13 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_pass http://api:9001;
+    }
+
+    location /assets/ {
+        include /etc/nginx/conf.d/auth/*.conf;
+        expires -1;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri =404;
     }
 
     location / {
