@@ -1,0 +1,73 @@
+name: deploy-demo
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: crowd-snake-demo
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      DEMO_SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+      DEMO_SSH_USER: ${{ vars.DEMO_SSH_USER }}
+      DEMO_APP_DIR: ${{ vars.DEMO_APP_DIR }}
+      DEMO_DOMAIN: ${{ vars.DEMO_DOMAIN }}
+      DEMO_WEB_PORT: ${{ vars.DEMO_WEB_PORT }}
+      DEMO_WEB_BIND_ADDRESS: ${{ vars.DEMO_WEB_BIND_ADDRESS }}
+      DEMO_POSTGRES_DB: ${{ vars.DEMO_POSTGRES_DB }}
+      DEMO_POSTGRES_USER: ${{ vars.DEMO_POSTGRES_USER }}
+      DEMO_REDIS_DATABASE: ${{ vars.DEMO_REDIS_DATABASE }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEMO_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DEMO_SSH_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Render deploy env file
+        run: |
+          cat <<EOF > .deploy.env
+          DEMO_DOMAIN=${DEMO_DOMAIN}
+          DEMO_WEB_BIND_ADDRESS=${DEMO_WEB_BIND_ADDRESS}
+          DEMO_WEB_PORT=${DEMO_WEB_PORT}
+          DEMO_BASIC_AUTH_USERNAME=${{ secrets.DEMO_BASIC_AUTH_USERNAME }}
+          DEMO_BASIC_AUTH_PASSWORD=${{ secrets.DEMO_BASIC_AUTH_PASSWORD }}
+          DEMO_POSTGRES_DB=${DEMO_POSTGRES_DB}
+          DEMO_POSTGRES_USER=${DEMO_POSTGRES_USER}
+          DEMO_POSTGRES_PASSWORD=${{ secrets.DEMO_POSTGRES_PASSWORD }}
+          DEMO_REDIS_DATABASE=${DEMO_REDIS_DATABASE}
+          EOF
+
+      - name: Create remote directory
+        run: |
+          ssh "${DEMO_SSH_USER}@${DEMO_SSH_HOST}" "mkdir -p '${DEMO_APP_DIR}'"
+
+      - name: Sync application files
+        run: |
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.env' \
+            ./ "${DEMO_SSH_USER}@${DEMO_SSH_HOST}:${DEMO_APP_DIR}/"
+
+      - name: Upload runtime env file
+        run: |
+          scp .deploy.env "${DEMO_SSH_USER}@${DEMO_SSH_HOST}:${DEMO_APP_DIR}/.env"
+
+      - name: Deploy on remote host
+        run: |
+          ssh "${DEMO_SSH_USER}@${DEMO_SSH_HOST}" \
+            "chmod +x '${DEMO_APP_DIR}/scripts/deploy-remote.sh' && '${DEMO_APP_DIR}/scripts/deploy-remote.sh' '${DEMO_APP_DIR}'"

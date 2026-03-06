@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crowd Snake</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="background background-left"></div>
+    <div class="background background-right"></div>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">crowd-snake / live demo</p>
+        <h1>Shared score. One board. No sidecars.</h1>
+        <p class="summary">
+          This demo keeps a single global best score in Postgres and mirrors it
+          through Redis for quick reads.
+        </p>
+      </section>
+
+      <section class="score-panel">
+        <div class="score-card">
+          <p class="label">Server best</p>
+          <p class="value" id="best-score">0</p>
+          <p class="meta" id="score-source">Loading state...</p>
+        </div>
+
+        <form class="score-form" id="score-form">
+          <label for="bestScore">Try to beat the record</label>
+          <div class="score-input-row">
+            <input
+              id="bestScore"
+              name="bestScore"
+              type="number"
+              min="0"
+              inputmode="numeric"
+              value="10"
+              required
+            />
+            <button type="submit">Submit score</button>
+          </div>
+          <p class="hint">Only a higher score replaces the current record.</p>
+        </form>
+      </section>
+
+      <section class="status-panel">
+        <div>
+          <p class="label">Transport</p>
+          <p class="status" id="request-status">Idle</p>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="refresh-button" type="button">
+            Refresh
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
