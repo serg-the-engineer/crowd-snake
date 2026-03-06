@@ -48,9 +48,13 @@ Before enabling the project in Symphony or the platform registry:
 
 ## Run Locally
 
+If `127.0.0.1:8081` is already occupied, free that port first or choose a
+different value for `DEMO_WEB_PORT` in `.env`.
+
 ```bash
 cd crowd-snake
 cp .env.example .env
+docker compose config -q
 docker compose up --build -d
 ```
 
@@ -60,6 +64,59 @@ Local auth is optional. Leave `DEMO_BASIC_AUTH_USERNAME` and
 
 The API creates the `demo_state` table automatically on first access if it does
 not exist yet.
+
+Open `http://127.0.0.1:8081` and confirm the page shows the snake board, score
+HUD, and restart controls.
+
+To stop the local stack:
+
+```bash
+cd crowd-snake
+docker compose down
+```
+
+## Verify Locally
+
+Automated verification:
+
+```bash
+cd crowd-snake
+./scripts/smoke-test.sh
+```
+
+Manual verification without local auth:
+
+```bash
+curl --fail http://127.0.0.1:8081/_healthz
+curl --fail http://127.0.0.1:8081/api/state
+curl --fail \
+  --header "Content-Type: application/json" \
+  --data '{"bestScore":17}' \
+  http://127.0.0.1:8081/api/state
+curl --fail http://127.0.0.1:8081/api/state
+```
+
+Manual verification with local auth enabled:
+
+```bash
+curl --fail -u "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+  http://127.0.0.1:8081/_healthz
+curl --fail -u "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+  http://127.0.0.1:8081/api/state
+curl --fail \
+  -u "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+  --header "Content-Type: application/json" \
+  --data '{"bestScore":17}' \
+  http://127.0.0.1:8081/api/state
+```
+
+Browser verification checklist:
+
+- load `http://127.0.0.1:8081`
+- confirm the page renders the snake canvas and HUD
+- move the snake with arrow keys
+- crash once and confirm `Server Best` updates after the run
+- click `Restart` and confirm a fresh game starts
 
 ## Demo Deployment
 
