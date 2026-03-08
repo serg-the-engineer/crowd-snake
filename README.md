@@ -45,6 +45,7 @@ Before enabling the project in Symphony or the platform registry:
 - keep `Human Review` in `active_states`: it remains a human waiting state semantically, but Symphony uses it to keep the agent alive for automated PR review/polling and auto-return to `Rework`
 - keep `.symphony/WORKFLOW.md`, `AGENTS.md`, `README.md`, `.env.example`, and
   deploy docs aligned when the runtime or delivery contract changes
+- keep the managed workflow sandbox at `danger-full-access` while validation depends on host Docker and the GitHub App broker socket outside the workspace
 
 ## Run Locally
 
