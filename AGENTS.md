@@ -9,6 +9,7 @@
 - Confirm `tracker.project_slug` in `.symphony/WORKFLOW.md` before enabling the project in Symphony or the platform registry.
 - Repo-local Symphony skills now live under `.codex/skills` (`linear`, `commit`, `pull`, `push`, `land`).
 - Managed Symphony runs for this repo intentionally use `danger-full-access` sandboxing because the canonical validation path requires host Docker access plus the GitHub App broker socket outside the workspace.
+- Managed Symphony runs must also keep the Symphony dashboard bound on `0.0.0.0`; otherwise the platform URL proxy can reach the host port, but the observability server still stays hidden on container loopback.
 
 ## Scope
 

@@ -20,6 +20,8 @@ polling:
   interval_ms: 5000
 workspace:
   root: $WORKSPACE_BASE
+server:
+  host: 0.0.0.0
 hooks:
   timeout_ms: 120000
   after_create: |
@@ -105,6 +107,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - When touching runtime behavior, compose topology, frontend assets, nginx, API code, deploy scripts, or docs that describe those surfaces, run `docker compose config -q` and `./scripts/smoke-test.sh`.
 - When changing only workflow or agent guidance, verify every referenced file path, command, env var, port, service name, and state name against the repo and platform docs.
 - This managed project intentionally uses `danger-full-access` so Codex can reach `/var/run/docker.sock`, the GitHub App broker socket under `/run/symphony/github`, and outbound GitHub network calls needed for unattended validation and PR work.
+- Keep `server.host: 0.0.0.0` in this workflow so the managed Symphony observability dashboard is reachable through the platform URL proxy instead of staying bound to container loopback.
 - Keep `README.md`, `.env.example`, `docs/demo-deploy.md`, `.github/workflows/*.yml`, `AGENTS.md`, and this workflow aligned with any runtime or deployment contract change.
 
 ## Default posture

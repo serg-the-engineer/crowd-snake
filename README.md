@@ -46,6 +46,7 @@ Before enabling the project in Symphony or the platform registry:
 - keep `.symphony/WORKFLOW.md`, `AGENTS.md`, `README.md`, `.env.example`, and
   deploy docs aligned when the runtime or delivery contract changes
 - keep the managed workflow sandbox at `danger-full-access` while validation depends on host Docker and the GitHub App broker socket outside the workspace
+- keep `server.host: 0.0.0.0` in the managed workflow so the Symphony dashboard can be proxied through the platform URL instead of remaining loopback-only inside the project container
 
 ## Run Locally
 
