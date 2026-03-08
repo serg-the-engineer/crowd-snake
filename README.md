@@ -84,6 +84,19 @@ cd crowd-snake
 ./scripts/smoke-test.sh
 ```
 
+The smoke script is also runner-safe. For managed runs that launch Docker on the
+host from inside another container, override the published target and compose
+namespace, for example:
+
+```bash
+DEMO_WEB_BIND_ADDRESS=0.0.0.0 \
+DEMO_SMOKE_TARGET_HOST=host.docker.internal \
+DEMO_SMOKE_TARGET_PORT=19081 \
+DEMO_SMOKE_COMPOSE_PROJECT_NAME=crowd-snake-managed \
+DEMO_WEB_PORT=19081 \
+./scripts/smoke-test.sh
+```
+
 Manual verification without local auth:
 
 ```bash
@@ -122,6 +135,9 @@ Browser verification checklist:
 
 - `.env.example` documents the runtime contract used by the deploy workflow.
 - `scripts/smoke-test.sh` exercises the full stack locally.
+- `scripts/smoke-test.sh` also supports managed-runner overrides through
+  `DEMO_SMOKE_TARGET_HOST`, `DEMO_SMOKE_TARGET_PORT`, and
+  `DEMO_SMOKE_COMPOSE_PROJECT_NAME`.
 - `scripts/deploy-remote.sh` is the entrypoint used on the demo host.
 - `docs/demo-deploy.md` lists the required GitHub variables, secrets, and the
   one-time host bootstrap steps.

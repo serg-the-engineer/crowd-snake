@@ -20,6 +20,7 @@
 - Keep changes single-purpose and update the narrowest relevant check first when changing behavior.
 - Keep `README.md` aligned with the real compose/runtime contract.
 - For runtime behavior, compose, nginx, frontend, API, deploy, or docs that describe those surfaces, run `docker compose config -q` and `./scripts/smoke-test.sh`.
+- When smoke tests run from a managed runner that talks to host Docker, use the script's env overrides (`DEMO_WEB_BIND_ADDRESS`, `DEMO_SMOKE_TARGET_HOST`, `DEMO_SMOKE_TARGET_PORT`, `DEMO_SMOKE_COMPOSE_PROJECT_NAME`) instead of hardcoding localhost assumptions.
 - For workflow or agent-guidance-only changes, verify every referenced path, command, env var, port, and service name against the repo and local platform contract.
 
 ## Runtime Contract

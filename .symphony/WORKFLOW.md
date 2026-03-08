@@ -32,7 +32,7 @@ hooks:
       docker compose down -v --remove-orphans >/dev/null 2>&1 || true
     fi
 agent:
-  max_concurrent_agents: 10
+  max_concurrent_agents: 1
   max_turns: 20
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
