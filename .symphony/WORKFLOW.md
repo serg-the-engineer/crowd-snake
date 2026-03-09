@@ -105,6 +105,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 ## Default validation contract
 
 - When touching runtime behavior, compose topology, frontend assets, nginx, API code, deploy scripts, or docs that describe those surfaces, run `docker compose config -q` and `./scripts/smoke-test.sh`.
+- When `./scripts/smoke-test.sh` runs from a managed runner that launches Docker on the host, do not assume runner-local loopback: use `DEMO_WEB_BIND_ADDRESS=0.0.0.0`, target `host.docker.internal`, set the matching `DEMO_SMOKE_TARGET_PORT`, and keep `DEMO_SMOKE_COMPOSE_PROJECT_NAME` unique per run.
 - When changing only workflow or agent guidance, verify every referenced file path, command, env var, port, service name, and state name against the repo and platform docs.
 - This managed project intentionally uses `danger-full-access` so Codex can reach `/var/run/docker.sock`, the GitHub App broker socket under `/run/symphony/github`, and outbound GitHub network calls needed for unattended validation and PR work.
 - Keep `server.host: 0.0.0.0` in this workflow so the managed Symphony observability dashboard is reachable through the platform URL proxy instead of staying bound to container loopback.
@@ -213,9 +214,10 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
 
 1. Identify the PR number from issue links/attachments.
 2. Gather feedback from all channels:
-   - Top-level PR comments (`gh pr view --comments`).
+   - Top-level PR discussion comments (`gh api repos/<owner>/<repo>/issues/<pr>/comments`).
    - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments`).
    - Review summaries/states (`gh pr view --json reviews`).
+   - Do not rely on `gh pr view --comments` as the only source for polling; older `gh` builds can fail on deprecated GitHub GraphQL `projectCards` fields.
 3. Treat every actionable reviewer comment (human or bot), including inline review comments, as blocking until one of these is true:
    - code/test/docs updated to address it, or
    - explicit, justified pushback reply is posted on that thread.
