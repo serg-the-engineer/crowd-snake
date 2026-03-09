@@ -3,6 +3,7 @@
 ## Symphony Workflow
 
 - Managed Symphony runs load `.symphony/WORKFLOW.md` as the primary agent prompt via `AGENTS_MD`.
+- Managed runs keep the issue in `In Progress` through implementation, validation, and the required four-pass agent review phase before handing off at `Human Review`.
 
 ## Scope
 

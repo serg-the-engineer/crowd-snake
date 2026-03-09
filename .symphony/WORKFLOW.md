@@ -124,7 +124,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - When changing only workflow or agent guidance, verify every referenced file path, command, env var, port, service name, and state name against the repo and platform docs.
 - This managed project intentionally uses `danger-full-access` so Codex can reach `/var/run/docker.sock`, the GitHub App broker socket under `/run/symphony/github`, and outbound GitHub network calls needed for unattended validation and PR work.
 - Keep `server.host: 0.0.0.0` in this workflow so the managed Symphony observability dashboard is reachable through the platform URL proxy instead of staying bound to container loopback.
-- This repo does not enable Symphony's built-in `review` stage by default. `Human Review` is a human handoff state here, and Symphony resumes only after a human moves the issue to `Merging` or `Rework`.
+- This repo does not enable Symphony's built-in `review` stage by default. Instead it runs a required agent review phase inside `In Progress`, and `Human Review` remains a human handoff state that resumes only after a human moves the issue to `Merging` or `Rework`.
 - `gpt-spark` is intentionally not referenced in `execution.model_routing`: some runtimes may not expose it in the active model-profile bundle or the backing tariff may not permit it. Use direct `ai:model/gpt-spark` labels only when the platform registry has that profile enabled for this project.
 - Keep `README.md`, `.env.example`, `docs/demo-deploy.md`, `.github/workflows/*.yml`, `AGENTS.md`, and this workflow aligned with any runtime or deployment contract change.
 
@@ -163,9 +163,9 @@ not exist, follow the equivalent procedure directly from this workflow.
 
 - `Backlog` -> out of scope for this workflow; do not modify.
 - `Todo` -> queued; immediately transition to `In Progress` before active work.
-  - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Human Review`).
-- `In Progress` -> implementation actively underway.
-- `Human Review` -> PR is attached and validated; waiting on a human decision. This state is intentionally not active.
+  - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, rerun the agent review phase, return to `Human Review`).
+- `In Progress` -> implementation, validation, and the required agent review phase are actively underway.
+- `Human Review` -> PR is attached, validated, and agent-reviewed; waiting on a human decision. This state is intentionally not active.
 - `Merging` -> approved by human; use the repo-local `land` skill if available, otherwise run the equivalent land loop (sync branch, address feedback, wait for green checks, squash-merge).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
@@ -228,7 +228,7 @@ not exist, follow the equivalent procedure directly from this workflow.
 
 ## PR feedback sweep protocol (required)
 
-When a ticket has an attached PR, run this protocol before moving to `Human Review`:
+When a ticket has an attached PR, run this protocol before starting the agent review phase and before moving to `Human Review`:
 
 1. Identify the PR number from issue links/attachments.
 2. Gather feedback from all channels:
@@ -292,33 +292,63 @@ Use this only when completion is blocked by missing required tools or missing au
     - Do not duplicate PR URL elsewhere; keep PR linkage on the issue via attachment/link fields, or use the single fallback line only when attachment is unavailable.
     - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
     - Do not post any additional completion summary comment.
-11. Before moving to `Human Review`, poll PR feedback and checks:
+11. Before starting the agent review phase, poll PR feedback and checks:
     - Read the PR `Manual QA Plan` comment when present and use it to sharpen UI/runtime test coverage for the current change.
     - Run the full PR feedback sweep protocol.
     - Confirm PR checks are passing (green) after the latest changes.
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Only then move issue to `Human Review`.
+12. Seed the workpad `### Agent Reviews` section with the four required review passes and continue in `In Progress` into the agent review phase.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
 13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
     - Ensure branch was pushed with any required updates.
-    - Then move to `Human Review`.
+    - Then continue into the agent review phase while staying in `In Progress`.
 
-## Step 3: Human Review and merge handling
+## Step 3: Agent review phase (within `In Progress`)
+
+1. During the agent review phase, stay in `In Progress`; this is the final automated gate before human approval.
+2. Reconcile the workpad before new review activity:
+   - Ensure `Plan`, `Acceptance Criteria`, and `Validation` still reflect the latest branch state.
+   - Ensure `### Agent Reviews` lists the four required review passes and their current status.
+3. Run the required review passes.
+   - Prefer parallel reviewers when the current environment supports multiple agents or external review jobs.
+   - If parallel review is unavailable, run the four passes sequentially in the same session.
+   - Do not collapse the passes into one generic note; keep them distinct.
+4. Required review passes:
+   - `Code Quality & Idiomaticity` -> readability, maintainability, conventions, API usage, and idiomatic code for the stack.
+   - `Task Fit & Completeness` -> confirm the PR matches the ticket scope, satisfies acceptance criteria, and handles key edge cases/regression risk.
+   - `Security` -> review secrets handling, auth/authz, data exposure, unsafe flows, dependency risk, and other security-sensitive changes in code and config.
+   - `Tests & Coverage` -> verify tests are meaningful, cover the critical path and important side effects, and avoid vacuous assertions or superficial coverage.
+5. Each pass must produce a durable artifact before the step is considered complete.
+   - Preferred artifact: a top-level PR comment titled `## Agent Review — <pass name>`.
+   - Mirror each pass in the workpad `### Agent Reviews` section with status, short findings summary, and evidence/validation notes.
+   - If PR commenting is unavailable, store the full review report in the workpad.
+6. Treat every actionable finding from any agent review pass as blocking until one of these is true:
+   - code/test/docs updated to address it and relevant validation rerun, or
+   - the finding is explicitly deferred with a justified rationale in both the review artifact and the workpad.
+7. After any review-driven change:
+   - rerun the relevant validation and required checks,
+   - update the review artifacts and workpad,
+   - refresh the PR feedback sweep so human/bot comments remain clear.
+8. Repeat the full agent-review sweep until all four required passes have durable artifacts and no actionable findings remain.
+9. Only then move the issue to `Human Review`.
+
+## Step 4: Human Review and merge handling
 
 1. `Human Review` is a human handoff state and is intentionally not in `active_states`.
 2. When the issue enters `Human Review`, do not code or change ticket content.
 3. Symphony should stop dispatching the issue while it remains in `Human Review`.
-4. A human reviews the PR and decides the next state:
+4. Human approval should be based on the workpad `### Agent Reviews` section and the corresponding PR review artifacts, in addition to the PR diff and checks.
+5. A human reviews the PR and decides the next state:
    - changes required -> move the issue to `Rework`;
    - approved -> move the issue to `Merging`.
-5. Do not implement code changes while the issue remains in `Human Review`; if changes are needed, wait for the human to move the issue to `Rework` first.
-6. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. If the repo-local `land` skill is unavailable, run the equivalent land loop directly. Do not merge until checks are green and review feedback is resolved.
-7. After merge is complete, move the issue to `Done`.
+6. Do not implement code changes while the issue remains in `Human Review`; if changes are needed, wait for the human to move the issue to `Rework` first.
+7. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. If the repo-local `land` skill is unavailable, run the equivalent land loop directly. Do not merge until checks are green and review feedback is resolved.
+8. After merge is complete, move the issue to `Done`.
 
-## Step 4: Rework handling
+## Step 5: Rework handling
 
 1. Treat `Rework` as a full approach reset, not incremental patching.
 2. Re-read the full issue body and all human comments; explicitly identify what will be done differently this attempt.
@@ -332,7 +362,7 @@ Use this only when completion is blocked by missing required tools or missing au
    - Create a new bootstrap `## Codex Workpad` comment.
    - Build a fresh plan/checklist and execute end-to-end.
 
-## Completion bar before Human Review
+## Completion bar before agent review phase
 
 - Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
 - Acceptance criteria and required ticket-provided validation items are complete.
@@ -341,6 +371,15 @@ Use this only when completion is blocked by missing required tools or missing au
 - PR checks are green, branch is pushed, PR is linked on the issue, and the PR
   body contains the required hidden Linear marker.
 - If runtime, deployment, or environment contract changed, the matching docs/config files are updated and consistent (`README.md`, `.env.example`, `docs/demo-deploy.md`, workflow files, and this workflow when relevant).
+
+## Completion bar before Human Review
+
+- The agent review phase is fully complete and accurately reflected in the single workpad comment.
+- All four required review passes are present as durable artifacts.
+- No actionable findings remain from any agent review pass.
+- Any deferred findings have an explicit rationale that is visible to the human reviewer.
+- Validation/tests are green for the latest commit after the last review-driven change.
+- The workpad `### Agent Reviews` section matches the latest PR/workpad review artifacts.
 
 ## Guardrails
 
@@ -355,7 +394,9 @@ Use this only when completion is blocked by missing required tools or missing au
   title/description/acceptance criteria, same-project assignment, a `related`
   link to the current issue, and `blockedBy` when the follow-up depends on the
   current issue.
+- Do not start the agent review phase unless the `Completion bar before agent review phase` is satisfied.
 - Do not move to `Human Review` unless the `Completion bar before Human Review` is satisfied.
+- During the agent review phase, stay in `In Progress` until all required review passes are complete and clean.
 - In `Human Review`, do not implement code changes directly and do not expect Symphony polling; wait for a human to move the issue to `Rework` or `Merging`.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
@@ -387,6 +428,13 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 ### Validation
 
 - [ ] targeted tests: `<command>`
+
+### Agent Reviews
+
+- [ ] Code Quality & Idiomaticity: `<artifact link or short status>`
+- [ ] Task Fit & Completeness: `<artifact link or short status>`
+- [ ] Security: `<artifact link or short status>`
+- [ ] Tests & Coverage: `<artifact link or short status>`
 
 ### Notes
 
