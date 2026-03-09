@@ -42,7 +42,14 @@ Before enabling the project in Symphony or the platform registry:
 - confirm `tracker.project_slug` in `.symphony/WORKFLOW.md`
 - make sure the Linear workflow includes `Todo`, `In Progress`, `Human Review`,
   `Rework`, `Merging`, and terminal done/closed states
-- keep `Human Review` in `active_states`: it remains a human waiting state semantically, but Symphony uses it to keep the agent alive for automated PR review/polling and auto-return to `Rework`
+- do not include `Human Review` in `active_states`: it is a human handoff state, and Symphony resumes only after a human moves the issue to `Merging` or `Rework`
+- keep at least `agent.max_concurrent_agents: 2` if you want two execution tasks to run concurrently
+- configure platform model routing to match the workflow: `Allowed model profiles` should include `gpt-5.4` and `gpt-oss`, and `Default model profile` should be `gpt-5.4`; add `gpt-spark` only if the active Codex tariff/runtime actually exposes it for this project
+- provide `GPT_OSS_BASE_URL` and `GPT_OSS_API_KEY` in the platform registry whenever `gpt-oss` is allowed for this project
+- keep the workflow label contract aligned with platform routing:
+  `ai:model/gpt-5.4`, `ai:model/gpt-spark`, and `ai:model/gpt-oss` are direct overrides;
+  `ai:lane/paid` and `ai:lane/free` map to `gpt-5.4` and `gpt-oss`;
+  reserve `ai:model/gpt-spark` for environments where `gpt-spark` is actually enabled in the registry bundle
 - keep the hidden PR marker `<!-- linear-issue: <identifier> -->` populated
   with the source Linear issue identifier so post-deploy incident handling can
   map a merged commit back to the original ticket
@@ -50,6 +57,14 @@ Before enabling the project in Symphony or the platform registry:
   deploy docs aligned when the runtime or delivery contract changes
 - keep the managed workflow sandbox at `danger-full-access` while validation depends on host Docker and the GitHub App broker socket outside the workspace
 - keep `server.host: 0.0.0.0` in the managed workflow so the Symphony dashboard can be proxied through the platform URL instead of remaining loopback-only inside the project container
+
+The managed workflow now uses platform-governed model routing:
+
+- default execution uses `gpt-5.4`
+- semantic lane labels can route execution to `gpt-oss`
+- direct `ai:model/<slug>` labels override the semantic-lane defaults
+- `gpt-spark` is optional and should only be selected via direct label override when the active platform bundle exposes it
+- this repo does not rely on Symphony's built-in `review` stage; `Human Review` is a non-active handoff state and requires a human transition to `Merging` or `Rework`
 
 ## Run Locally
 
@@ -90,8 +105,9 @@ cd crowd-snake
 ```
 
 The smoke script is also runner-safe. For managed runs that launch Docker on the
-host from inside another container, override the published target and compose
-namespace, for example:
+host from inside another container, let the runtime-provided issue-scoped
+`SYMPHONY_DOCKER_*` env drive the script, or set the compatible `DEMO_*`
+overrides explicitly, for example:
 
 ```bash
 DEMO_WEB_BIND_ADDRESS=0.0.0.0 \

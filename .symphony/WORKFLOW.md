@@ -7,7 +7,6 @@ tracker:
   active_states:
     - Todo
     - In Progress
-    - Human Review
     - Merging
     - Rework
   terminal_states:
@@ -31,13 +30,24 @@ hooks:
     fi
   before_remove: |
     if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
-      docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+      docker compose --project-name "${DEMO_SMOKE_COMPOSE_PROJECT_NAME:-crowd-snake-smoke}" down -v --remove-orphans >/dev/null 2>&1 || true
     fi
 agent:
-  max_concurrent_agents: 1
+  max_concurrent_agents: 2
   max_turns: 20
+execution:
+  model_routing:
+    default_profile: gpt-5.4
+    rules:
+      - match:
+          issue.labels_any: ["ai:lane/free"]
+        profile: gpt-oss
+      - match:
+          issue.labels_any: ["ai:lane/paid"]
+        profile: gpt-5.4
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
+  # Legacy fallback when the runtime does not expose a model-profile bundle.
+  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.4 app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -110,10 +120,12 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 ## Default validation contract
 
 - When touching runtime behavior, compose topology, frontend assets, nginx, API code, deploy scripts, or docs that describe those surfaces, run `docker compose config -q` and `./scripts/smoke-test.sh`.
-- When `./scripts/smoke-test.sh` runs from a managed runner that launches Docker on the host, do not assume runner-local loopback: use `DEMO_WEB_BIND_ADDRESS=0.0.0.0`, target `host.docker.internal`, set the matching `DEMO_SMOKE_TARGET_PORT`, and keep `DEMO_SMOKE_COMPOSE_PROJECT_NAME` unique per run.
+- When `./scripts/smoke-test.sh` runs from a managed runner that launches Docker on the host, do not assume runner-local loopback: prefer the runtime-provided issue-scoped `SYMPHONY_DOCKER_*` env, or set the compatible `DEMO_WEB_BIND_ADDRESS=0.0.0.0`, `DEMO_SMOKE_TARGET_HOST=host.docker.internal`, matching `DEMO_SMOKE_TARGET_PORT`, and a unique `DEMO_SMOKE_COMPOSE_PROJECT_NAME`.
 - When changing only workflow or agent guidance, verify every referenced file path, command, env var, port, service name, and state name against the repo and platform docs.
 - This managed project intentionally uses `danger-full-access` so Codex can reach `/var/run/docker.sock`, the GitHub App broker socket under `/run/symphony/github`, and outbound GitHub network calls needed for unattended validation and PR work.
 - Keep `server.host: 0.0.0.0` in this workflow so the managed Symphony observability dashboard is reachable through the platform URL proxy instead of staying bound to container loopback.
+- This repo does not enable Symphony's built-in `review` stage by default. `Human Review` is a human handoff state here, and Symphony resumes only after a human moves the issue to `Merging` or `Rework`.
+- `gpt-spark` is intentionally not referenced in `execution.model_routing`: some runtimes may not expose it in the active model-profile bundle or the backing tariff may not permit it. Use direct `ai:model/gpt-spark` labels only when the platform registry has that profile enabled for this project.
 - Keep `README.md`, `.env.example`, `docs/demo-deploy.md`, `.github/workflows/*.yml`, `AGENTS.md`, and this workflow aligned with any runtime or deployment contract change.
 
 ## Default posture
@@ -153,7 +165,7 @@ not exist, follow the equivalent procedure directly from this workflow.
 - `Todo` -> queued; immediately transition to `In Progress` before active work.
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Human Review`).
 - `In Progress` -> implementation actively underway.
-- `Human Review` -> PR is attached and validated; semantically waiting on a human, but kept active so Symphony can run agent review for the current PR head and continue polling.
+- `Human Review` -> PR is attached and validated; waiting on a human decision. This state is intentionally not active.
 - `Merging` -> approved by human; use the repo-local `land` skill if available, otherwise run the equivalent land loop (sync branch, address feedback, wait for green checks, squash-merge).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
@@ -167,7 +179,7 @@ not exist, follow the equivalent procedure directly from this workflow.
    - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `In Progress` -> continue execution flow from current scratchpad comment.
-   - `Human Review` -> run the human-review flow.
+   - `Human Review` -> stop and wait for a human to move the issue to `Merging` or `Rework`.
    - `Merging` -> use the repo-local `land` skill if present; otherwise run the equivalent land loop directly.
    - `Rework` -> run rework flow.
    - `Done` -> do nothing and shut down.
@@ -296,25 +308,15 @@ Use this only when completion is blocked by missing required tools or missing au
 
 ## Step 3: Human Review and merge handling
 
-1. `Human Review` is semantically a waiting state for a human, but it remains active so Symphony can stay attached, review the PR, and keep polling.
-2. When the issue enters `Human Review`, identify the attached PR and current PR head SHA.
-3. Check the workpad and PR discussion to determine whether this exact head SHA has already been reviewed by the agent.
-4. If the current head SHA has not yet been reviewed by the agent:
-   - perform an agent review of the PR focused on bugs, regressions, missing validation, and runtime/deploy/docs contract mismatches;
-   - record the review pass in the workpad, including the reviewed head SHA and the outcome.
-5. If the agent review finds actionable issues:
-   - post or update PR feedback when possible,
-   - update the workpad with the findings and why they block approval,
-   - move the issue to `Rework`,
-   - stop waiting in `Human Review`.
-6. If the current head SHA has already been reviewed and no new findings exist, do not repeat the full review; just poll for changes.
-7. While the issue remains in `Human Review`, poll for updates:
-   - new PR head SHA -> rerun the agent review for the new head;
-   - new human/bot feedback that requires code changes -> move the issue to `Rework`;
-   - human approval -> wait for the human to move the issue to `Merging`.
-8. Do not implement code changes while the issue remains in `Human Review`; if changes are needed, move to `Rework` first.
-9. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. If the repo-local `land` skill is unavailable, run the equivalent land loop directly. Do not merge until checks are green and review feedback is resolved.
-10. After merge is complete, move the issue to `Done`.
+1. `Human Review` is a human handoff state and is intentionally not in `active_states`.
+2. When the issue enters `Human Review`, do not code or change ticket content.
+3. Symphony should stop dispatching the issue while it remains in `Human Review`.
+4. A human reviews the PR and decides the next state:
+   - changes required -> move the issue to `Rework`;
+   - approved -> move the issue to `Merging`.
+5. Do not implement code changes while the issue remains in `Human Review`; if changes are needed, wait for the human to move the issue to `Rework` first.
+6. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. If the repo-local `land` skill is unavailable, run the equivalent land loop directly. Do not merge until checks are green and review feedback is resolved.
+7. After merge is complete, move the issue to `Done`.
 
 ## Step 4: Rework handling
 
@@ -354,7 +356,7 @@ Use this only when completion is blocked by missing required tools or missing au
   link to the current issue, and `blockedBy` when the follow-up depends on the
   current issue.
 - Do not move to `Human Review` unless the `Completion bar before Human Review` is satisfied.
-- In `Human Review`, do not implement code changes directly. Review, comment, poll, and move to `Rework` if changes are needed.
+- In `Human Review`, do not implement code changes directly and do not expect Symphony polling; wait for a human to move the issue to `Rework` or `Merging`.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
 - If blocked and no workpad exists yet, add one blocker comment describing blocker, impact, and next unblock action.
