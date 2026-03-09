@@ -1,6 +1,12 @@
 const GRID_SIZE = 18;
 const CELL_SIZE = 20;
 const LOOP_MS = 140;
+const OBSTACLE_SIZE = 2;
+const OBSTACLE_SPAWN_MIN_MS = 1_000;
+const OBSTACLE_SPAWN_MAX_MS = 30_000;
+const OBSTACLE_LIFETIME_MIN_MS = 5_000;
+const OBSTACLE_LIFETIME_MAX_MS = 30_000;
+const OBSTACLE_MIN_HEAD_DISTANCE = 4;
 const UPDATE_CHECK_MS = 30_000;
 const UNKNOWN_VALUE = "unknown";
 const NA_VALUE = "n/a";
@@ -63,8 +69,11 @@ const state = {
   direction: { x: 1, y: 0 },
   nextDirection: { x: 1, y: 0 },
   food: { x: 0, y: 0 },
+  obstacleCells: [],
   score: 0,
   tickHandle: null,
+  obstacleSpawnHandle: null,
+  obstacleDespawnHandle: null,
   isGameOver: false,
   hasUpdateNotice: false,
   remoteBestScore: null,
@@ -96,14 +105,139 @@ function randomCell() {
   };
 }
 
+function randomIntInclusive(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function obstacleCellsFromOrigin(origin) {
+  const cells = [];
+
+  for (let yOffset = 0; yOffset < OBSTACLE_SIZE; yOffset += 1) {
+    for (let xOffset = 0; xOffset < OBSTACLE_SIZE; xOffset += 1) {
+      cells.push({ x: origin.x + xOffset, y: origin.y + yOffset });
+    }
+  }
+
+  return cells;
+}
+
+function obstacleContainsCell(candidate) {
+  return state.obstacleCells.some((cell) => sameCell(cell, candidate));
+}
+
 function spawnFood() {
   let candidate = randomCell();
 
-  while (state.snake.some((segment) => sameCell(segment, candidate))) {
+  while (
+    state.snake.some((segment) => sameCell(segment, candidate)) ||
+    obstacleContainsCell(candidate)
+  ) {
     candidate = randomCell();
   }
 
   state.food = candidate;
+}
+
+function clearObstacleTimers() {
+  if (state.obstacleSpawnHandle !== null) {
+    window.clearTimeout(state.obstacleSpawnHandle);
+    state.obstacleSpawnHandle = null;
+  }
+
+  if (state.obstacleDespawnHandle !== null) {
+    window.clearTimeout(state.obstacleDespawnHandle);
+    state.obstacleDespawnHandle = null;
+  }
+}
+
+function scheduleNextObstacleSpawn() {
+  if (state.isGameOver) {
+    return;
+  }
+
+  const nextSpawnDelay = randomIntInclusive(
+    OBSTACLE_SPAWN_MIN_MS,
+    OBSTACLE_SPAWN_MAX_MS,
+  );
+
+  state.obstacleSpawnHandle = window.setTimeout(() => {
+    state.obstacleSpawnHandle = null;
+    spawnObstacle();
+  }, nextSpawnDelay);
+}
+
+function isObstacleCandidateValid(candidateCells) {
+  const head = state.snake[0];
+
+  if (!head) {
+    return false;
+  }
+
+  return candidateCells.every((cell) => {
+    const distanceFromHead =
+      Math.abs(cell.x - head.x) + Math.abs(cell.y - head.y);
+
+    return (
+      cell.x >= 0 &&
+      cell.x < GRID_SIZE &&
+      cell.y >= 0 &&
+      cell.y < GRID_SIZE &&
+      distanceFromHead >= OBSTACLE_MIN_HEAD_DISTANCE &&
+      !state.snake.some((segment) => sameCell(segment, cell)) &&
+      !sameCell(state.food, cell)
+    );
+  });
+}
+
+function scheduleObstacleDespawn() {
+  const obstacleLifetime = randomIntInclusive(
+    OBSTACLE_LIFETIME_MIN_MS,
+    OBSTACLE_LIFETIME_MAX_MS,
+  );
+
+  state.obstacleDespawnHandle = window.setTimeout(() => {
+    state.obstacleDespawnHandle = null;
+    despawnObstacle();
+  }, obstacleLifetime);
+}
+
+function spawnObstacle() {
+  if (state.isGameOver) {
+    return;
+  }
+
+  const maxOrigin = GRID_SIZE - OBSTACLE_SIZE;
+  const maxAttempts = 200;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const origin = {
+      x: randomIntInclusive(0, maxOrigin),
+      y: randomIntInclusive(0, maxOrigin),
+    };
+    const candidateCells = obstacleCellsFromOrigin(origin);
+
+    if (!isObstacleCandidateValid(candidateCells)) {
+      continue;
+    }
+
+    state.obstacleCells = candidateCells;
+    draw();
+    scheduleObstacleDespawn();
+    return;
+  }
+
+  state.obstacleCells = [];
+  scheduleNextObstacleSpawn();
+}
+
+function despawnObstacle() {
+  if (state.isGameOver) {
+    return;
+  }
+
+  state.obstacleCells = [];
+  draw();
+  scheduleNextObstacleSpawn();
 }
 
 function drawGrid() {
@@ -160,6 +294,7 @@ function draw() {
   context.fillRect(0, 0, board.width, board.height);
 
   drawGrid();
+  state.obstacleCells.forEach((cell) => drawCell(cell, "#868d94"));
   drawCell(state.food, "#ffd36a");
 
   state.snake.forEach((segment, index) => {
@@ -177,6 +312,8 @@ function stopLoop() {
     window.clearInterval(state.tickHandle);
     state.tickHandle = null;
   }
+
+  clearObstacleTimers();
 }
 
 function endGame() {
@@ -203,7 +340,8 @@ function step() {
     nextHead.x >= GRID_SIZE ||
     nextHead.y < 0 ||
     nextHead.y >= GRID_SIZE ||
-    occupiedCells.some((segment) => sameCell(segment, nextHead));
+    occupiedCells.some((segment) => sameCell(segment, nextHead)) ||
+    obstacleContainsCell(nextHead);
 
   if (crashed) {
     endGame();
@@ -237,11 +375,13 @@ function startGame() {
   state.direction = { x: 1, y: 0 };
   state.nextDirection = { x: 1, y: 0 };
   state.score = 0;
+  state.obstacleCells = [];
   state.isGameOver = false;
 
   spawnFood();
   updateHud("Running");
   draw();
+  scheduleNextObstacleSpawn();
 
   state.tickHandle = window.setInterval(step, LOOP_MS);
 }
