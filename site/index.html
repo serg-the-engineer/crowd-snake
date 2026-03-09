@@ -9,20 +9,10 @@
   </head>
   <body data-app-version="0.2.0">
     <main class="shell">
-      <section class="hero">
-        <p class="eyebrow">crowd-snake / live demo</p>
-        <h1>Snake on the crowd-snake stack</h1>
-        <p class="lede">
-          Static snake frontend, shared server-best score via
-          <code>/api/state</code>, and a version banner when a newer frontend
-          revision is detected.
-        </p>
-      </section>
-
-      <section class="game-panel">
+      <section class="status-panel">
         <div class="notice" id="update-banner" hidden>
           <strong>New version ready:</strong>
-          <span id="update-version">unknown</span>
+          <span id="update-version">n/a</span>
           <button type="button" id="refresh-button">Refresh page</button>
         </div>
 
@@ -44,7 +34,9 @@
             <span class="value" id="server-best">--</span>
           </div>
         </div>
+      </section>
 
+      <section class="game-panel">
         <canvas
           id="game-board"
           width="360"
