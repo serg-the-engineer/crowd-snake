@@ -99,6 +99,10 @@ DEMO_WEB_PORT=19081 \
 ./scripts/smoke-test.sh
 ```
 
+The script prints its effective publish and probe settings before it starts. If
+you target `host.docker.internal`, `DEMO_SMOKE_TARGET_PORT` must match
+`DEMO_WEB_PORT` because the probe is hitting the host-published web port.
+
 Manual verification without local auth:
 
 ```bash

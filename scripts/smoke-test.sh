@@ -13,9 +13,38 @@ export DEMO_SMOKE_TARGET_HOST="${DEMO_SMOKE_TARGET_HOST:-127.0.0.1}"
 export DEMO_SMOKE_TARGET_PORT="${DEMO_SMOKE_TARGET_PORT:-${DEMO_WEB_PORT}}"
 export DEMO_SMOKE_COMPOSE_PROJECT_NAME="${DEMO_SMOKE_COMPOSE_PROJECT_NAME:-crowd-snake-smoke}"
 
-if [[ "${DEMO_SMOKE_TARGET_HOST}" != "127.0.0.1" && "${DEMO_SMOKE_TARGET_HOST}" != "localhost" && "${DEMO_WEB_BIND_ADDRESS}" == "127.0.0.1" ]]; then
-    echo "DEMO_WEB_BIND_ADDRESS=127.0.0.1 is unreachable from DEMO_SMOKE_TARGET_HOST=${DEMO_SMOKE_TARGET_HOST}; use DEMO_WEB_BIND_ADDRESS=0.0.0.0 for managed runner smoke tests." >&2
+print_effective_config() {
+    echo "smoke-test config: publish=${DEMO_WEB_BIND_ADDRESS}:${DEMO_WEB_PORT} target=${DEMO_SMOKE_TARGET_HOST}:${DEMO_SMOKE_TARGET_PORT} compose_project=${DEMO_SMOKE_COMPOSE_PROJECT_NAME}"
+}
+
+fail_config() {
+    echo "$1" >&2
+    print_effective_config >&2
     exit 1
+}
+
+is_loopback_host() {
+    [[ "$1" == "127.0.0.1" || "$1" == "localhost" ]]
+}
+
+if ! [[ "${DEMO_WEB_PORT}" =~ ^[0-9]+$ ]]; then
+    fail_config "DEMO_WEB_PORT must be numeric."
+fi
+
+if ! [[ "${DEMO_SMOKE_TARGET_PORT}" =~ ^[0-9]+$ ]]; then
+    fail_config "DEMO_SMOKE_TARGET_PORT must be numeric."
+fi
+
+if [[ "${DEMO_SMOKE_TARGET_HOST}" == "host.docker.internal" && "${DEMO_WEB_BIND_ADDRESS}" != "0.0.0.0" ]]; then
+    fail_config "DEMO_WEB_BIND_ADDRESS=${DEMO_WEB_BIND_ADDRESS} is incompatible with DEMO_SMOKE_TARGET_HOST=host.docker.internal; publish on 0.0.0.0 for managed runner smoke tests."
+fi
+
+if [[ "${DEMO_SMOKE_TARGET_HOST}" == "host.docker.internal" && "${DEMO_SMOKE_TARGET_PORT}" != "${DEMO_WEB_PORT}" ]]; then
+    fail_config "DEMO_SMOKE_TARGET_PORT=${DEMO_SMOKE_TARGET_PORT} must match DEMO_WEB_PORT=${DEMO_WEB_PORT} when targeting host.docker.internal."
+fi
+
+if ! is_loopback_host "${DEMO_SMOKE_TARGET_HOST}" && [[ "${DEMO_WEB_BIND_ADDRESS}" == "127.0.0.1" ]]; then
+    fail_config "DEMO_WEB_BIND_ADDRESS=127.0.0.1 is unreachable from DEMO_SMOKE_TARGET_HOST=${DEMO_SMOKE_TARGET_HOST}; use DEMO_WEB_BIND_ADDRESS=0.0.0.0 for managed runner smoke tests."
 fi
 
 compose_cmd=(docker compose --project-name "${DEMO_SMOKE_COMPOSE_PROJECT_NAME}")
@@ -36,6 +65,7 @@ trap cleanup EXIT
 
 cleanup
 "${compose_cmd[@]}" config -q
+print_effective_config
 "${compose_cmd[@]}" up --build -d
 
 for _ in $(seq 1 24); do
