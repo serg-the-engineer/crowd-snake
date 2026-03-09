@@ -4,6 +4,7 @@ const LOOP_MS = 140;
 const UPDATE_CHECK_MS = 30_000;
 const VERSION_STORAGE_KEY = "crowd-snake.last-version";
 const UNKNOWN_VERSION = "unknown";
+const NA_VERSION = "n/a";
 
 const board = document.getElementById("game-board");
 const context = board.getContext("2d");
@@ -26,7 +27,12 @@ function normalizeVersion(value) {
 }
 
 function hasKnownVersion(value) {
-  return value.length > 0 && value.toLowerCase() !== UNKNOWN_VERSION;
+  if (value.length === 0) {
+    return false;
+  }
+
+  const normalizedValue = value.toLowerCase();
+  return normalizedValue !== UNKNOWN_VERSION && normalizedValue !== NA_VERSION;
 }
 
 const state = {
