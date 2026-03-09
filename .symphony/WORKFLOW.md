@@ -165,7 +165,7 @@ not exist, follow the equivalent procedure directly from this workflow.
 - `Todo` -> queued; immediately transition to `In Progress` before active work.
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, rerun the agent review phase, return to `Human Review`).
 - `In Progress` -> implementation, validation, and the required agent review phase are actively underway.
-- `Human Review` -> PR is attached, validated, and agent-reviewed; waiting on a human decision. This state is intentionally not active.
+- `Human Review` -> PR is attached, validated, agent-reviewed, and complexity-scored; waiting on a human decision. This state is intentionally not active.
 - `Merging` -> approved by human; use the repo-local `land` skill if available, otherwise run the equivalent land loop (sync branch, address feedback, wait for green checks, squash-merge).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
@@ -299,7 +299,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Seed the workpad `### Agent Reviews` section with the four required review passes and continue in `In Progress` into the agent review phase.
+12. Seed the workpad `### Agent Reviews` section with the four required review passes and keep the `### Complexity Score` section ready for the final handoff score, then continue in `In Progress` into the agent review phase.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
 13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
@@ -312,6 +312,7 @@ Use this only when completion is blocked by missing required tools or missing au
 2. Reconcile the workpad before new review activity:
    - Ensure `Plan`, `Acceptance Criteria`, and `Validation` still reflect the latest branch state.
    - Ensure `### Agent Reviews` lists the four required review passes and their current status.
+   - Ensure `### Complexity Score` exists and is reserved for the final score only after the review-driven diff is stable.
 3. Run the required review passes.
    - Prefer parallel reviewers when the current environment supports multiple agents or external review jobs.
    - If parallel review is unavailable, run the four passes sequentially in the same session.
@@ -333,14 +334,36 @@ Use this only when completion is blocked by missing required tools or missing au
    - update the review artifacts and workpad,
    - refresh the PR feedback sweep so human/bot comments remain clear.
 8. Repeat the full agent-review sweep until all four required passes have durable artifacts and no actionable findings remain.
-9. Only then move the issue to `Human Review`.
+9. After the final review-driven change is complete and validation is green, compute a complexity score from the final PR diff and resulting branch state before moving to `Human Review`.
+   - Record the score only in the workpad `### Complexity Score` section. Do not publish it as a PR comment or separate review artifact.
+   - Use this additive rubric, capped at `100`:
+     - `Surface area` `0-25` -> effective diff size, file count, and amount of behavior changed.
+     - `Cross-cutting reach` `0-20` -> number of subsystems, interfaces, and contracts touched.
+     - `Invariants/risk` `0-25` -> state coupling, hidden assumptions, failure modes, and irreversible mistakes.
+     - `Dependency/runtime impact` `0-20` -> new dependencies, build/deploy/runtime changes, migrations, and operational coupling.
+     - `Validation/rollout burden` `0-10` -> how much evidence, soak time, or manual verification is required to trust the change.
+   - Hard guardrails:
+     - A true `1` is reserved for one or more constants, typos, comments, or copy-only fixes with no logic change.
+     - Pure constants/typos/comments/copy-only changes cap at `5`.
+     - Any new production dependency floors at `81`.
+     - Clearly broad PRs with many critical invariants or strong runtime/deploy coupling floor at `81`.
+   - Band guidance:
+     - `1-5` -> constants, typos, copy, comments, trivial metadata.
+     - `6-15` -> tiny localized code change in one place.
+     - `16-30` -> small feature/fix using existing patterns in one area.
+     - `31-50` -> moderate multi-file or subtle logic change.
+     - `51-70` -> broad behavior change or refactor across subsystems.
+     - `71-80` -> high-risk change with many invariants or sensitive flows.
+     - `81-100` -> new dependencies, large PRs, or multiple critical invariants/operational surfaces.
+   - Write one bullet per rubric dimension with `<points>` and a short why, then end the section with `**Complexity Score: NN/100**`.
+10. Only then move the issue to `Human Review`.
 
 ## Step 4: Human Review and merge handling
 
 1. `Human Review` is a human handoff state and is intentionally not in `active_states`.
 2. When the issue enters `Human Review`, do not code or change ticket content.
 3. Symphony should stop dispatching the issue while it remains in `Human Review`.
-4. Human approval should be based on the workpad `### Agent Reviews` section and the corresponding PR review artifacts, in addition to the PR diff and checks.
+4. Human approval should be based on the workpad `### Agent Reviews` and `### Complexity Score` sections, the corresponding PR review artifacts, and the final PR diff/checks.
 5. A human reviews the PR and decides the next state:
    - changes required -> move the issue to `Rework`;
    - approved -> move the issue to `Merging`.
@@ -378,6 +401,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - All four required review passes are present as durable artifacts.
 - No actionable findings remain from any agent review pass.
 - Any deferred findings have an explicit rationale that is visible to the human reviewer.
+- The workpad `### Complexity Score` section is populated from the final PR diff, includes all five rubric dimensions, and ends with a bold `**Complexity Score: NN/100**` line.
 - Validation/tests are green for the latest commit after the last review-driven change.
 - The workpad `### Agent Reviews` section matches the latest PR/workpad review artifacts.
 
@@ -443,4 +467,14 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 ### Confusions
 
 - <only include when something was confusing during execution>
+
+### Complexity Score
+
+- Surface area: `<points>` - `<why>`
+- Cross-cutting reach: `<points>` - `<why>`
+- Invariants/risk: `<points>` - `<why>`
+- Dependency/runtime impact: `<points>` - `<why>`
+- Validation/rollout burden: `<points>` - `<why>`
+
+**Complexity Score: NN/100**
 ````

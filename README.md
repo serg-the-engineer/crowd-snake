@@ -43,7 +43,7 @@ The managed workflow now uses platform-governed model routing:
 - semantic lane labels can route execution to `gpt-oss`
 - direct `ai:model/<slug>` labels override the semantic-lane defaults
 - `gpt-spark` is optional and should only be selected via direct label override when the active platform bundle exposes it
-- this repo does not rely on Symphony's built-in `review` stage; instead it runs a required agent review phase inside `In Progress` before moving to `Human Review`
+- this repo does not rely on Symphony's built-in `review` stage; instead it runs a required agent review phase inside `In Progress`, then records a required workpad-only complexity score before moving to `Human Review`
 - `Human Review` is a non-active handoff state and requires a human transition to `Merging` or `Rework`
 
 ## Run Locally
