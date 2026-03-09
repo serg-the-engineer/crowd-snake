@@ -120,7 +120,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 ## Default validation contract
 
 - When touching runtime behavior, compose topology, frontend assets, nginx, API code, deploy scripts, or docs that describe those surfaces, run `docker compose config -q` and `./scripts/smoke-test.sh`.
-- When `./scripts/smoke-test.sh` runs from a managed runner that launches Docker on the host, do not assume runner-local loopback: prefer the runtime-provided issue-scoped `SYMPHONY_DOCKER_*` env, or set the compatible `DEMO_WEB_BIND_ADDRESS=0.0.0.0`, `DEMO_SMOKE_TARGET_HOST=host.docker.internal`, matching `DEMO_SMOKE_TARGET_PORT`, and a unique `DEMO_SMOKE_COMPOSE_PROJECT_NAME`.
+- When `./scripts/smoke-test.sh` runs from a managed runner that launches Docker on the host, do not assume runner-local loopback: prefer the runtime-provided issue-scoped `SYMPHONY_DOCKER_*` env, or set the compatible `DEMO_WEB_BIND_ADDRESS=0.0.0.0`, matching `DEMO_WEB_PORT` and `DEMO_SMOKE_TARGET_PORT`, `DEMO_SMOKE_TARGET_HOST=host.docker.internal`, and a unique `DEMO_SMOKE_COMPOSE_PROJECT_NAME`.
 - When changing only workflow or agent guidance, verify every referenced file path, command, env var, port, service name, and state name against the repo and platform docs.
 - This managed project intentionally uses `danger-full-access` so Codex can reach `/var/run/docker.sock`, the GitHub App broker socket under `/run/symphony/github`, and outbound GitHub network calls needed for unattended validation and PR work.
 - Keep `server.host: 0.0.0.0` in this workflow so the managed Symphony observability dashboard is reachable through the platform URL proxy instead of staying bound to container loopback.

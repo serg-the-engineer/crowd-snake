@@ -49,6 +49,7 @@ fi
 
 compose_cmd=(docker compose --project-name "${DEMO_SMOKE_COMPOSE_PROJECT_NAME}")
 base_url="http://${DEMO_SMOKE_TARGET_HOST}:${DEMO_SMOKE_TARGET_PORT}"
+tmp_index_file="$(mktemp "${TMPDIR:-/tmp}/crowd-snake-smoke-index.XXXXXX.html")"
 expected_version_manifest="$(python3 - <<'PY'
 import json
 from pathlib import Path
@@ -58,6 +59,7 @@ PY
 )"
 
 cleanup() {
+    rm -f "${tmp_index_file}"
     "${compose_cmd[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 }
 
@@ -85,11 +87,11 @@ status_code="$(
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
     "${base_url}/" \
-    > /tmp/crowd-snake-smoke-index.html
+    > "${tmp_index_file}"
 
-grep -q 'id="game-board"' /tmp/crowd-snake-smoke-index.html
-grep -q 'data-app-commit-sha="local-dev"' /tmp/crowd-snake-smoke-index.html
-grep -q 'New build ready:' /tmp/crowd-snake-smoke-index.html
+grep -q 'id="game-board"' "${tmp_index_file}"
+grep -q 'data-app-commit-sha="local-dev"' "${tmp_index_file}"
+grep -q 'New build ready:' "${tmp_index_file}"
 
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
