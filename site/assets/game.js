@@ -7,6 +7,12 @@ const OBSTACLE_SPAWN_MAX_MS = 30_000;
 const OBSTACLE_LIFETIME_MIN_MS = 5_000;
 const OBSTACLE_LIFETIME_MAX_MS = 30_000;
 const OBSTACLE_MIN_HEAD_DISTANCE = 4;
+const MIN_LOOP_MS = 40;
+const SPEED_BOOST_FACTOR = 0.9;
+const DANGER_FOOD_SPAWN_MIN_MS = 1_000;
+const DANGER_FOOD_SPAWN_MAX_MS = 30_000;
+const DANGER_FOOD_LIFETIME_MIN_MS = 5_000;
+const DANGER_FOOD_LIFETIME_MAX_MS = 30_000;
 const UPDATE_CHECK_MS = 30_000;
 const UNKNOWN_VALUE = "unknown";
 const NA_VALUE = "n/a";
@@ -70,10 +76,14 @@ const state = {
   nextDirection: { x: 1, y: 0 },
   food: { x: 0, y: 0 },
   obstacleCells: [],
+  dangerFood: null,
   score: 0,
+  loopMs: LOOP_MS,
   tickHandle: null,
   obstacleSpawnHandle: null,
   obstacleDespawnHandle: null,
+  dangerFoodSpawnHandle: null,
+  dangerFoodDespawnHandle: null,
   isGameOver: false,
   hasUpdateNotice: false,
   remoteBestScore: null,
@@ -125,12 +135,17 @@ function obstacleContainsCell(candidate) {
   return state.obstacleCells.some((cell) => sameCell(cell, candidate));
 }
 
+function hasDangerFood() {
+  return state.dangerFood !== null;
+}
+
 function spawnFood() {
   let candidate = randomCell();
 
   while (
     state.snake.some((segment) => sameCell(segment, candidate)) ||
-    obstacleContainsCell(candidate)
+    obstacleContainsCell(candidate) ||
+    (hasDangerFood() && sameCell(state.dangerFood, candidate))
   ) {
     candidate = randomCell();
   }
@@ -184,7 +199,8 @@ function isObstacleCandidateValid(candidateCells) {
       cell.y < GRID_SIZE &&
       distanceFromHead >= OBSTACLE_MIN_HEAD_DISTANCE &&
       !state.snake.some((segment) => sameCell(segment, cell)) &&
-      !sameCell(state.food, cell)
+      !sameCell(state.food, cell) &&
+      (!hasDangerFood() || !sameCell(state.dangerFood, cell))
     );
   });
 }
@@ -238,6 +254,91 @@ function despawnObstacle() {
   state.obstacleCells = [];
   draw();
   scheduleNextObstacleSpawn();
+}
+
+function clearDangerFoodTimers() {
+  if (state.dangerFoodSpawnHandle !== null) {
+    window.clearTimeout(state.dangerFoodSpawnHandle);
+    state.dangerFoodSpawnHandle = null;
+  }
+
+  if (state.dangerFoodDespawnHandle !== null) {
+    window.clearTimeout(state.dangerFoodDespawnHandle);
+    state.dangerFoodDespawnHandle = null;
+  }
+}
+
+function scheduleDangerFoodDespawn() {
+  if (state.isGameOver || !hasDangerFood()) {
+    return;
+  }
+
+  const delay = randomIntInclusive(
+    DANGER_FOOD_LIFETIME_MIN_MS,
+    DANGER_FOOD_LIFETIME_MAX_MS,
+  );
+
+  state.dangerFoodDespawnHandle = window.setTimeout(() => {
+    state.dangerFoodDespawnHandle = null;
+    despawnDangerFood();
+  }, delay);
+}
+
+function scheduleNextDangerFoodSpawn() {
+  if (state.isGameOver || hasDangerFood()) {
+    return;
+  }
+
+  const delay = randomIntInclusive(
+    DANGER_FOOD_SPAWN_MIN_MS,
+    DANGER_FOOD_SPAWN_MAX_MS,
+  );
+
+  state.dangerFoodSpawnHandle = window.setTimeout(() => {
+    state.dangerFoodSpawnHandle = null;
+    spawnDangerFood();
+  }, delay);
+}
+
+function spawnDangerFood() {
+  if (state.isGameOver || hasDangerFood()) {
+    return;
+  }
+
+  const maxAttempts = 200;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = randomCell();
+
+    if (state.snake.some((segment) => sameCell(segment, candidate))) {
+      continue;
+    }
+
+    if (sameCell(state.food, candidate)) {
+      continue;
+    }
+
+    if (obstacleContainsCell(candidate)) {
+      continue;
+    }
+
+    state.dangerFood = candidate;
+    draw();
+    scheduleDangerFoodDespawn();
+    return;
+  }
+
+  scheduleNextDangerFoodSpawn();
+}
+
+function despawnDangerFood() {
+  if (state.isGameOver || !hasDangerFood()) {
+    return;
+  }
+
+  state.dangerFood = null;
+  draw();
+  scheduleNextDangerFoodSpawn();
 }
 
 function drawGrid() {
@@ -295,6 +396,9 @@ function draw() {
 
   drawGrid();
   state.obstacleCells.forEach((cell) => drawCell(cell, "#868d94"));
+  if (hasDangerFood()) {
+    drawCell(state.dangerFood, "#ff4f4f");
+  }
   drawCell(state.food, "#ffd36a");
 
   state.snake.forEach((segment, index) => {
@@ -307,13 +411,27 @@ function draw() {
   }
 }
 
-function stopLoop() {
+function stopMovementLoop() {
   if (state.tickHandle !== null) {
     window.clearInterval(state.tickHandle);
     state.tickHandle = null;
   }
+}
 
+function startMovementLoop() {
+  stopMovementLoop();
+  state.tickHandle = window.setInterval(step, state.loopMs);
+}
+
+function stopLoop() {
+  stopMovementLoop();
   clearObstacleTimers();
+  clearDangerFoodTimers();
+}
+
+function applyDangerFoodSpeedBoost() {
+  state.loopMs = Math.max(MIN_LOOP_MS, Math.round(state.loopMs * SPEED_BOOST_FACTOR));
+  startMovementLoop();
 }
 
 function endGame() {
@@ -332,7 +450,9 @@ function step() {
     x: head.x + state.direction.x,
     y: head.y + state.direction.y,
   };
-  const willGrow = sameCell(nextHead, state.food);
+  const ateFood = sameCell(nextHead, state.food);
+  const ateDangerFood = hasDangerFood() && sameCell(nextHead, state.dangerFood);
+  const willGrow = ateFood || ateDangerFood;
   const occupiedCells = willGrow ? state.snake : state.snake.slice(0, -1);
 
   const crashed =
@@ -353,7 +473,18 @@ function step() {
   if (willGrow) {
     state.score += 1;
     updateHud("Running");
-    spawnFood();
+
+    if (ateFood) {
+      spawnFood();
+    }
+
+    if (ateDangerFood) {
+      state.dangerFood = null;
+      clearDangerFoodTimers();
+      scheduleNextDangerFoodSpawn();
+      applyDangerFoodSpeedBoost();
+    }
+
     void syncRemoteBestScore();
   } else {
     state.snake.pop();
@@ -376,14 +507,17 @@ function startGame() {
   state.nextDirection = { x: 1, y: 0 };
   state.score = 0;
   state.obstacleCells = [];
+  state.loopMs = LOOP_MS;
+  state.dangerFood = null;
   state.isGameOver = false;
 
   spawnFood();
+  scheduleNextDangerFoodSpawn();
   updateHud("Running");
   draw();
   scheduleNextObstacleSpawn();
 
-  state.tickHandle = window.setInterval(step, LOOP_MS);
+  startMovementLoop();
 }
 
 function queueDirection(nextDirection) {
