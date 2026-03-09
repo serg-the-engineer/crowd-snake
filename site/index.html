@@ -16,6 +16,19 @@
           <button type="button" id="refresh-button">Refresh page</button>
         </div>
 
+        <label class="nickname-control" for="nickname-input">
+          <span class="label">Nickname</span>
+          <input
+            type="text"
+            id="nickname-input"
+            name="nickname"
+            maxlength="24"
+            autocomplete="nickname"
+            spellcheck="false"
+            placeholder="anonymous"
+          />
+        </label>
+
         <div class="hud">
           <div>
             <span class="label">Score</span>
@@ -32,6 +45,10 @@
           <div>
             <span class="label">Server Best</span>
             <span class="value" id="server-best">--</span>
+          </div>
+          <div>
+            <span class="label">Best By</span>
+            <span class="value" id="server-best-nickname">--</span>
           </div>
         </div>
       </section>

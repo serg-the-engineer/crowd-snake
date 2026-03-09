@@ -1,8 +1,10 @@
 import json
 import os
+import secrets
 import socket
 import subprocess
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -16,6 +18,11 @@ DATABASE_URL = os.environ.get(
 REDIS_URL = os.environ.get("DEMO_REDIS_URL", "redis://redis:6380/0")
 API_HOST = os.environ.get("DEMO_API_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("DEMO_API_PORT", "9001"))
+DEFAULT_NICKNAME = "anonymous"
+MAX_NICKNAME_LENGTH = 24
+CHALLENGE_TTL_SECONDS = 30
+CHALLENGE_DIFFICULTY = 4
+CHALLENGE_MAX_PROOF_NONCE = 2_000_000
 
 
 def parse_redis_url(url):
@@ -31,6 +38,30 @@ def parse_redis_url(url):
         database = int(parsed.path.lstrip("/"))
 
     return host, port, database
+
+
+def normalize_nickname(raw_value):
+    if raw_value is None:
+        return DEFAULT_NICKNAME
+
+    if not isinstance(raw_value, str):
+        raise ValueError("nickname must be a string")
+
+    normalized = " ".join(raw_value.strip().split())
+    if not normalized:
+        return DEFAULT_NICKNAME
+
+    return normalized[:MAX_NICKNAME_LENGTH]
+
+
+def fnv1a_32(text):
+    result = 2166136261
+
+    for chunk in text.encode("utf-8"):
+        result ^= chunk
+        result = (result * 16777619) & 0xFFFFFFFF
+
+    return f"{result:08x}"
 
 
 class RedisClient:
@@ -109,14 +140,31 @@ class RedisClient:
     def ping(self):
         return self._call("PING") == "PONG"
 
-    def get_best_score(self):
+    def get_best_state(self):
         payload = self._call("GET", STATE_KEY)
         if payload is None:
             return None
-        return max(int(payload), 0)
 
-    def cache_best_score(self, score):
-        self._call("SET", STATE_KEY, max(int(score), 0))
+        try:
+            parsed = json.loads(payload)
+            best_score = max(int(parsed.get("bestScore", 0)), 0)
+            best_nickname = normalize_nickname(parsed.get("bestNickname"))
+            return {"bestScore": best_score, "bestNickname": best_nickname}
+        except Exception:
+            return {
+                "bestScore": max(int(payload), 0),
+                "bestNickname": DEFAULT_NICKNAME,
+            }
+
+    def cache_best_state(self, state):
+        payload = json.dumps(
+            {
+                "bestScore": max(int(state.get("bestScore", 0)), 0),
+                "bestNickname": normalize_nickname(state.get("bestNickname")),
+            },
+            ensure_ascii=False,
+        )
+        self._call("SET", STATE_KEY, payload)
 
 
 class PostgresClient:
@@ -144,6 +192,9 @@ class PostgresClient:
         )
         return result.stdout.strip()
 
+    def _sql_literal(self, value):
+        return "'" + str(value).replace("'", "''") + "'"
+
     def ensure_schema(self):
         if self._schema_ready:
             return
@@ -157,8 +208,12 @@ class PostgresClient:
                 CREATE TABLE IF NOT EXISTS demo_state (
                     id SMALLINT PRIMARY KEY,
                     best_score INTEGER NOT NULL CHECK (best_score >= 0),
+                    best_nickname TEXT NOT NULL DEFAULT 'anonymous',
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+
+                ALTER TABLE demo_state
+                ADD COLUMN IF NOT EXISTS best_nickname TEXT NOT NULL DEFAULT 'anonymous';
                 """
             )
             self._schema_ready = True
@@ -166,37 +221,137 @@ class PostgresClient:
     def ping(self):
         return self._run_sql("SELECT 1;") == "1"
 
-    def get_best_score(self):
+    def get_best_state(self):
         self.ensure_schema()
         payload = self._run_sql(
-            "SELECT COALESCE((SELECT best_score FROM demo_state WHERE id = 1), 0);"
+            """
+            SELECT COALESCE(
+                (
+                    SELECT json_build_object(
+                        'bestScore', best_score,
+                        'bestNickname', best_nickname
+                    )::text
+                    FROM demo_state
+                    WHERE id = 1
+                ),
+                '{"bestScore":0,"bestNickname":"anonymous"}'
+            );
+            """
         )
-        return max(int(payload or "0"), 0)
+        parsed = json.loads(payload)
+        return {
+            "bestScore": max(int(parsed.get("bestScore", 0)), 0),
+            "bestNickname": normalize_nickname(parsed.get("bestNickname")),
+        }
 
-    def save_best_score(self, score):
+    def save_best_state(self, score, nickname):
         self.ensure_schema()
-        candidate = max(int(score), 0)
+        candidate_score = max(int(score), 0)
+        candidate_nickname = normalize_nickname(nickname)
+        nickname_sql = self._sql_literal(candidate_nickname)
+
         payload = self._run_sql(
             (
-                "INSERT INTO demo_state (id, best_score) VALUES (1, {candidate}) "
+                "INSERT INTO demo_state (id, best_score, best_nickname) "
+                "VALUES (1, {candidate_score}, {candidate_nickname}) "
                 "ON CONFLICT (id) DO UPDATE SET "
                 "best_score = GREATEST(demo_state.best_score, EXCLUDED.best_score), "
-                "updated_at = NOW() "
-                "RETURNING best_score;"
-            ).format(candidate=candidate)
+                "best_nickname = CASE "
+                "  WHEN EXCLUDED.best_score > demo_state.best_score THEN EXCLUDED.best_nickname "
+                "  ELSE demo_state.best_nickname "
+                "END, "
+                "updated_at = CASE "
+                "  WHEN EXCLUDED.best_score > demo_state.best_score THEN NOW() "
+                "  ELSE demo_state.updated_at "
+                "END "
+                "RETURNING json_build_object("
+                "  'bestScore', best_score, "
+                "  'bestNickname', best_nickname, "
+                "  'stored', best_score = {candidate_score} AND best_nickname = {candidate_nickname}"
+                ")::text;"
+            ).format(candidate_score=candidate_score, candidate_nickname=nickname_sql)
         )
-        return max(int(payload or "0"), 0)
+
+        parsed = json.loads(payload)
+        return {
+            "bestScore": max(int(parsed.get("bestScore", 0)), 0),
+            "bestNickname": normalize_nickname(parsed.get("bestNickname")),
+            "stored": bool(parsed.get("stored", False)),
+        }
+
+
+class ChallengeStore:
+    def __init__(self, ttl_seconds, difficulty):
+        self.ttl_seconds = max(int(ttl_seconds), 5)
+        self.difficulty = max(int(difficulty), 1)
+        self._lock = threading.Lock()
+        self._pending = {}
+
+    def _prune_expired(self, now):
+        expired = [
+            challenge_id
+            for challenge_id, challenge in self._pending.items()
+            if challenge["expiresAt"] <= now
+        ]
+        for challenge_id in expired:
+            self._pending.pop(challenge_id, None)
+
+    def create(self):
+        now = time.time()
+        challenge = {
+            "challengeId": secrets.token_hex(16),
+            "nonce": secrets.token_hex(8),
+            "difficulty": self.difficulty,
+            "expiresAt": int(now + self.ttl_seconds),
+        }
+
+        with self._lock:
+            self._prune_expired(now)
+            self._pending[challenge["challengeId"]] = {
+                "nonce": challenge["nonce"],
+                "expiresAt": challenge["expiresAt"],
+            }
+
+        return challenge
+
+    def verify_and_consume(self, challenge_id, nickname, score, proof_nonce):
+        now = time.time()
+
+        with self._lock:
+            self._prune_expired(now)
+            challenge = self._pending.get(challenge_id)
+
+        if challenge is None:
+            return False, "challenge missing or expired"
+
+        nonce_value = int(proof_nonce)
+        if nonce_value < 0 or nonce_value > CHALLENGE_MAX_PROOF_NONCE:
+            return False, "proofNonce is out of accepted range"
+
+        token = fnv1a_32(
+            f"{challenge_id}:{challenge['nonce']}:{nickname}:{score}:{nonce_value}"
+        )
+        if not token.startswith("0" * self.difficulty):
+            return False, "proof check failed"
+
+        with self._lock:
+            if challenge_id not in self._pending:
+                return False, "challenge already used"
+            self._pending.pop(challenge_id, None)
+
+        return True, None
 
 
 class DemoStateHandler(BaseHTTPRequestHandler):
     postgres = PostgresClient(DATABASE_URL)
     redis = RedisClient(REDIS_URL)
+    challenges = ChallengeStore(CHALLENGE_TTL_SECONDS, CHALLENGE_DIFFICULTY)
 
     def log_message(self, format, *args):
         return
 
     def _send_json(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -210,25 +365,27 @@ class DemoStateHandler(BaseHTTPRequestHandler):
             return {}
         return json.loads(raw_body.decode("utf-8"))
 
-    def _load_best_score(self):
+    def _load_best_state(self):
         try:
-            cached_score = self.redis.get_best_score()
-            if cached_score is not None:
-                return cached_score, "redis"
+            cached_state = self.redis.get_best_state()
+            if cached_state is not None:
+                return cached_state, "redis"
         except Exception:
             pass
 
-        best_score = self.postgres.get_best_score()
+        best_state = self.postgres.get_best_state()
 
         try:
-            self.redis.cache_best_score(best_score)
+            self.redis.cache_best_state(best_state)
         except Exception:
             pass
 
-        return best_score, "postgres"
+        return best_state, "postgres"
 
     def do_GET(self):
-        if self.path == "/healthz":
+        parsed_path = urlparse(self.path)
+
+        if parsed_path.path == "/healthz":
             redis_ok = False
 
             try:
@@ -251,12 +408,21 @@ class DemoStateHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/state":
+        if parsed_path.path == "/api/challenge":
+            challenge = self.challenges.create()
+            self._send_json(HTTPStatus.OK, challenge)
+            return
+
+        if parsed_path.path == "/api/state":
             try:
-                best_score, source = self._load_best_score()
+                best_state, source = self._load_best_state()
                 self._send_json(
                     HTTPStatus.OK,
-                    {"bestScore": best_score, "source": source},
+                    {
+                        "bestScore": best_state["bestScore"],
+                        "bestNickname": best_state["bestNickname"],
+                        "source": source,
+                    },
                 )
             except Exception as error:
                 self._send_json(
@@ -268,33 +434,62 @@ class DemoStateHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/api/state":
+        parsed_path = urlparse(self.path)
+
+        if parsed_path.path != "/api/state":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
 
         try:
             payload = self._read_json()
-            candidate = max(int(payload.get("bestScore", 0)), 0)
-            best_score = self.postgres.save_best_score(candidate)
+            candidate_score = max(int(payload.get("bestScore", 0)), 0)
+            candidate_nickname = normalize_nickname(payload.get("nickname"))
+            challenge_id = payload.get("challengeId")
+            proof_nonce = int(payload.get("proofNonce"))
+
+            if not isinstance(challenge_id, str) or not challenge_id:
+                raise ValueError("challengeId must be a non-empty string")
+
+            challenge_ok, challenge_error = self.challenges.verify_and_consume(
+                challenge_id,
+                candidate_nickname,
+                candidate_score,
+                proof_nonce,
+            )
+            if not challenge_ok:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": challenge_error},
+                )
+                return
+
+            result = self.postgres.save_best_state(candidate_score, candidate_nickname)
 
             cache_updated = True
             try:
-                self.redis.cache_best_score(best_score)
+                self.redis.cache_best_state(result)
             except Exception:
                 cache_updated = False
 
             self._send_json(
                 HTTPStatus.OK,
                 {
-                    "bestScore": best_score,
-                    "stored": best_score == candidate,
+                    "bestScore": result["bestScore"],
+                    "bestNickname": result["bestNickname"],
+                    "stored": result["stored"],
                     "cacheUpdated": cache_updated,
                 },
             )
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "bestScore must be a non-negative integer"},
+                {
+                    "error": (
+                        "bestScore must be a non-negative integer; nickname must be text; "
+                        "challengeId must be provided; proofNonce must be a non-negative integer"
+                    ),
+                    "details": str(error),
+                },
             )
         except Exception as error:
             self._send_json(
