@@ -2,6 +2,8 @@ const GRID_SIZE = 18;
 const CELL_SIZE = 20;
 const LOOP_MS = 140;
 const UPDATE_CHECK_MS = 30_000;
+const VERSION_STORAGE_KEY = "crowd-snake.last-version";
+const UNKNOWN_VERSION = "unknown";
 
 const board = document.getElementById("game-board");
 const context = board.getContext("2d");
@@ -13,7 +15,19 @@ const updateBannerNode = document.getElementById("update-banner");
 const updateVersionNode = document.getElementById("update-version");
 const restartButton = document.getElementById("restart-button");
 const refreshButton = document.getElementById("refresh-button");
-const currentVersion = document.body.dataset.appVersion || "0.0.0";
+const currentVersion = normalizeVersion(document.body.dataset.appVersion);
+
+function normalizeVersion(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim();
+}
+
+function hasKnownVersion(value) {
+  return value.length > 0 && value.toLowerCase() !== UNKNOWN_VERSION;
+}
 
 const state = {
   snake: [],
@@ -39,7 +53,9 @@ function updateHud(statusText) {
 
   scoreNode.textContent = String(state.score);
   statusNode.textContent = state.statusText;
-  currentVersionNode.textContent = currentVersion;
+  currentVersionNode.textContent = hasKnownVersion(currentVersion)
+    ? currentVersion
+    : "--";
   serverBestNode.textContent =
     state.remoteBestScore === null ? "--" : String(state.remoteBestScore);
 }
@@ -212,16 +228,57 @@ function queueDirection(nextDirection) {
 }
 
 function revealUpdateNotice(nextVersion) {
-  if (state.hasUpdateNotice) {
+  const normalizedVersion = normalizeVersion(nextVersion);
+
+  if (state.hasUpdateNotice || !hasKnownVersion(normalizedVersion)) {
     return;
   }
 
   state.hasUpdateNotice = true;
-  updateVersionNode.textContent = nextVersion;
+  updateVersionNode.textContent = normalizedVersion;
   updateBannerNode.hidden = false;
 }
 
+function readStoredVersion() {
+  try {
+    return normalizeVersion(window.localStorage.getItem(VERSION_STORAGE_KEY));
+  } catch (error) {
+    console.debug("Version state read failed", error);
+    return "";
+  }
+}
+
+function writeStoredVersion(version) {
+  if (!hasKnownVersion(version)) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(VERSION_STORAGE_KEY, version);
+  } catch (error) {
+    console.debug("Version state write failed", error);
+  }
+}
+
+function bootstrapVersionState() {
+  if (!hasKnownVersion(currentVersion)) {
+    return;
+  }
+
+  const storedVersion = readStoredVersion();
+
+  if (hasKnownVersion(storedVersion) && storedVersion !== currentVersion) {
+    revealUpdateNotice(currentVersion);
+  }
+
+  writeStoredVersion(currentVersion);
+}
+
 async function checkForUpdate() {
+  if (!hasKnownVersion(currentVersion)) {
+    return;
+  }
+
   try {
     // Keep default caching so the browser reuses validators and respects nginx TTL.
     const response = await window.fetch("/version.json", {
@@ -233,9 +290,10 @@ async function checkForUpdate() {
     }
 
     const payload = await response.json();
+    const remoteVersion = normalizeVersion(payload.version);
 
-    if (payload.version && payload.version !== currentVersion) {
-      revealUpdateNotice(payload.version);
+    if (hasKnownVersion(remoteVersion) && remoteVersion !== currentVersion) {
+      revealUpdateNotice(remoteVersion);
     }
   } catch (error) {
     console.debug("Version check failed", error);
@@ -322,6 +380,7 @@ document.addEventListener("keydown", (event) => {
 restartButton.addEventListener("click", startGame);
 refreshButton.addEventListener("click", () => window.location.reload());
 
+bootstrapVersionState();
 startGame();
 void loadRemoteState();
 window.setTimeout(checkForUpdate, 5_000);
