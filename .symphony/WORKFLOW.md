@@ -80,12 +80,17 @@ Work only in the provided repository copy. Do not touch any other path.
 ## Prerequisite: Linear MCP or `linear_graphql` tool is available
 
 The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, treat that as a blocker: record it in the workpad and stop according to the blocked-access escape hatch.
+- When changing the issue state from inside Symphony, use `symphony_update_issue_state`; do not use raw `linear_graphql` state mutations.
 
 ## Repository context
 
 - This repository is `crowd-snake`.
 - Do not reintroduce historical project names.
 - Do not add workflow, docs, or runtime dependencies on removed sidecar services.
+- PR bodies in this repo must include the hidden marker
+  `<!-- linear-issue: <identifier> -->` with the current Linear issue
+  identifier so post-deploy incident handling can map merged commits back to
+  the source ticket.
 - The compose stack consists only of `web`, `api`, `db`, and `redis`.
 - `web` is the only public service.
 - Internal service ports stay `9001`, `5433`, and `6380`.
@@ -183,6 +188,7 @@ not exist, follow the equivalent procedure directly from this workflow.
     - If found, reuse that comment; do not create a new workpad comment.
     - If not found, create one workpad comment and use it for all updates.
     - Persist the workpad comment ID and only write progress updates to that ID.
+    - Preserve any content between `<!-- symphony:token-accounting:start -->` and `<!-- symphony:token-accounting:end -->`; Symphony owns that section.
 2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
@@ -266,6 +272,7 @@ Use this only when completion is blocked by missing required tools or missing au
 8.  Attach PR URL to the issue.
     - Prefer an issue attachment/link field.
     - If attachment is unavailable, add exactly one fallback line to the workpad: `PR Link (fallback): <url>`.
+    - Ensure the PR body contains the hidden marker `<!-- linear-issue: {{ issue.identifier }} -->` before publishing or refreshing the PR.
 9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
@@ -329,7 +336,8 @@ Use this only when completion is blocked by missing required tools or missing au
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
 - PR feedback sweep is complete and no actionable comments remain.
-- PR checks are green, branch is pushed, and PR is linked on the issue.
+- PR checks are green, branch is pushed, PR is linked on the issue, and the PR
+  body contains the required hidden Linear marker.
 - If runtime, deployment, or environment contract changed, the matching docs/config files are updated and consistent (`README.md`, `.env.example`, `docs/demo-deploy.md`, workflow files, and this workflow when relevant).
 
 ## Guardrails

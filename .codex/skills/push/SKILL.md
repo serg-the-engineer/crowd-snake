@@ -51,6 +51,9 @@ description:
      matches the latest scope; update it if it no longer does.
 6. Write/update the PR body explicitly.
    - If `.github/pull_request_template.md` exists, follow it exactly.
+   - In this repo, the hidden marker `<!-- linear-issue: <identifier> -->`
+     must be filled with the source Linear issue identifier instead of leaving
+     the placeholder in place.
    - If no template exists, use a concise body with:
      - `## Summary`
      - `## Validation`
@@ -106,6 +109,8 @@ cat > "$tmp_pr_body" <<'EOF'
 
 ## Deployment Notes
 - <only if runtime/deploy contract changed>
+
+<!-- linear-issue: RT-123 -->
 EOF
 
 if [ -z "$pr_state" ]; then

@@ -6,12 +6,20 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: read
+
 concurrency:
   group: crowd-snake-demo
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  ci-gate:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: ci-gate
     runs-on: ubuntu-latest
 
     env:
@@ -28,6 +36,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Render build metadata
+        run: |
+          python3 ./scripts/render-build-metadata.py \
+            --index-html site/index.html \
+            --version-json site/version.json \
+            --commit-sha "${GITHUB_SHA}" \
+            --updated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Prepare SSH key
         run: |
@@ -71,3 +87,169 @@ jobs:
         run: |
           ssh "${DEMO_SSH_USER}@${DEMO_SSH_HOST}" \
             "chmod +x '${DEMO_APP_DIR}/scripts/deploy-remote.sh' && '${DEMO_APP_DIR}/scripts/deploy-remote.sh' '${DEMO_APP_DIR}'"
+
+  wait-for-public-build:
+    needs: deploy
+    runs-on: ubuntu-latest
+    outputs:
+      confirmed: ${{ steps.wait.outputs.confirmed }}
+    env:
+      DEMO_DOMAIN: ${{ vars.DEMO_DOMAIN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Wait for public commit SHA
+        id: wait
+        run: |
+          mkdir -p output/deploy
+          status=0
+          python3 ./scripts/wait-for-public-build.py \
+            --url "https://${DEMO_DOMAIN}/version.json" \
+            --expected-commit-sha "${GITHUB_SHA}" \
+            --username "${{ secrets.DEMO_BASIC_AUTH_USERNAME }}" \
+            --password "${{ secrets.DEMO_BASIC_AUTH_PASSWORD }}" \
+            --output output/deploy/public-build.json \
+            || status=$?
+
+          confirmed=false
+          if [ "${status}" -eq 0 ]; then
+            confirmed=true
+          fi
+
+          echo "confirmed=${confirmed}" >> "${GITHUB_OUTPUT}"
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload public build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-build-report
+          path: output/deploy/public-build.json
+
+  browser-probe:
+    needs: wait-for-public-build
+    if: needs.wait-for-public-build.outputs.confirmed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      incident: ${{ steps.probe.outputs.incident }}
+    env:
+      DEMO_DOMAIN: ${{ vars.DEMO_DOMAIN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.52.0
+          npx playwright install --with-deps chromium
+
+      - name: Run browser probe
+        id: probe
+        run: |
+          mkdir -p output/playwright
+          status=0
+          node ./scripts/browser-probe.mjs \
+            --url "https://${DEMO_DOMAIN}/" \
+            --expected-commit-sha "${GITHUB_SHA}" \
+            --username "${{ secrets.DEMO_BASIC_AUTH_USERNAME }}" \
+            --password "${{ secrets.DEMO_BASIC_AUTH_PASSWORD }}" \
+            --report output/playwright/browser-probe.json \
+            --screenshot output/playwright/browser-probe.png \
+            || status=$?
+
+          incident=false
+          if [ "${status}" -ne 0 ]; then
+            incident=true
+          fi
+
+          echo "incident=${incident}" >> "${GITHUB_OUTPUT}"
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload browser probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-probe-report
+          path: output/playwright/
+
+  incident-and-revert:
+    needs:
+      - wait-for-public-build
+      - browser-probe
+    if: |
+      always() &&
+      (
+        needs.wait-for-public-build.outputs.confirmed != 'true' ||
+        needs.browser-probe.outputs.incident == 'true'
+      )
+    runs-on: ubuntu-latest
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      LINEAR_FALLBACK_TEAM_ID: 821a2ccc-70d1-446a-a34d-6627447aa70c
+      LINEAR_FALLBACK_PROJECT_ID: 7f5b97a3-46c5-410d-9d44-6f45d09b8b79
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download public build report
+        uses: actions/download-artifact@v4
+        with:
+          name: public-build-report
+          path: output/deploy
+
+      - name: Download browser probe report
+        if: needs.browser-probe.outputs.incident == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: browser-probe-report
+          path: output/playwright
+
+      - name: Handle deploy incident
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          scenario="browser_incident"
+          browser_report_path=""
+
+          if [ "${{ needs.wait-for-public-build.outputs.confirmed }}" != "true" ]; then
+            scenario="deploy_witness_timeout"
+          elif [ -f output/playwright/browser-probe.json ]; then
+            browser_report_path="output/playwright/browser-probe.json"
+          fi
+
+          args=(
+            --repo "${GITHUB_REPOSITORY}"
+            --sha "${GITHUB_SHA}"
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            --scenario "${scenario}"
+            --wait-report "output/deploy/public-build.json"
+            --summary-output "output/deploy/incident-summary.json"
+          )
+
+          if [ -n "${browser_report_path}" ]; then
+            args+=(--browser-report "${browser_report_path}")
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${scenario}" = "browser_incident" ]; then
+            args+=(--allow-auto-revert)
+          fi
+
+          python3 ./scripts/handle-post-deploy-incident.py "${args[@]}"
+
+      - name: Upload incident summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: incident-summary
+          path: output/deploy/incident-summary.json

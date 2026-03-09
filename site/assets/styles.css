@@ -94,6 +94,10 @@ code {
   color: #fff2c4;
 }
 
+.notice[hidden] {
+  display: none;
+}
+
 .hud {
   display: grid;
   grid-template-columns: 1fr;

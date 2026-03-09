@@ -2,9 +2,9 @@ const GRID_SIZE = 18;
 const CELL_SIZE = 20;
 const LOOP_MS = 140;
 const UPDATE_CHECK_MS = 30_000;
-const VERSION_STORAGE_KEY = "crowd-snake.last-version";
-const UNKNOWN_VERSION = "unknown";
-const NA_VERSION = "n/a";
+const UNKNOWN_VALUE = "unknown";
+const NA_VALUE = "n/a";
+const BUILD_NOTICE_FALLBACK = "refresh to load latest changes";
 
 const board = document.getElementById("game-board");
 const context = board.getContext("2d");
@@ -16,9 +16,10 @@ const updateBannerNode = document.getElementById("update-banner");
 const updateVersionNode = document.getElementById("update-version");
 const restartButton = document.getElementById("restart-button");
 const refreshButton = document.getElementById("refresh-button");
-const currentVersion = normalizeVersion(document.body.dataset.appVersion);
+const currentVersion = normalizeValue(document.body.dataset.appVersion);
+const currentCommitSha = normalizeBuildId(document.body.dataset.appCommitSha);
 
-function normalizeVersion(value) {
+function normalizeValue(value) {
   if (typeof value !== "string") {
     return "";
   }
@@ -26,13 +27,35 @@ function normalizeVersion(value) {
   return value.trim();
 }
 
-function hasKnownVersion(value) {
+function normalizeBuildId(value) {
+  return normalizeValue(value).toLowerCase();
+}
+
+function hasKnownValue(value) {
   if (value.length === 0) {
     return false;
   }
 
   const normalizedValue = value.toLowerCase();
-  return normalizedValue !== UNKNOWN_VERSION && normalizedValue !== NA_VERSION;
+  return normalizedValue !== UNKNOWN_VALUE && normalizedValue !== NA_VALUE;
+}
+
+function hasKnownVersion(value) {
+  return hasKnownValue(value);
+}
+
+function hasKnownBuildId(value) {
+  return hasKnownValue(value);
+}
+
+function formatUpdateLabel(nextVersion) {
+  const normalizedVersion = normalizeValue(nextVersion);
+
+  if (hasKnownVersion(normalizedVersion) && normalizedVersion !== currentVersion) {
+    return normalizedVersion;
+  }
+
+  return BUILD_NOTICE_FALLBACK;
 }
 
 const state = {
@@ -234,54 +257,17 @@ function queueDirection(nextDirection) {
 }
 
 function revealUpdateNotice(nextVersion) {
-  const normalizedVersion = normalizeVersion(nextVersion);
-
-  if (state.hasUpdateNotice || !hasKnownVersion(normalizedVersion)) {
+  if (state.hasUpdateNotice) {
     return;
   }
 
   state.hasUpdateNotice = true;
-  updateVersionNode.textContent = normalizedVersion;
+  updateVersionNode.textContent = formatUpdateLabel(nextVersion);
   updateBannerNode.hidden = false;
 }
 
-function readStoredVersion() {
-  try {
-    return normalizeVersion(window.localStorage.getItem(VERSION_STORAGE_KEY));
-  } catch (error) {
-    console.debug("Version state read failed", error);
-    return "";
-  }
-}
-
-function writeStoredVersion(version) {
-  if (!hasKnownVersion(version)) {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(VERSION_STORAGE_KEY, version);
-  } catch (error) {
-    console.debug("Version state write failed", error);
-  }
-}
-
-function bootstrapVersionState() {
-  if (!hasKnownVersion(currentVersion)) {
-    return;
-  }
-
-  const storedVersion = readStoredVersion();
-
-  if (hasKnownVersion(storedVersion) && storedVersion !== currentVersion) {
-    revealUpdateNotice(currentVersion);
-  }
-
-  writeStoredVersion(currentVersion);
-}
-
 async function checkForUpdate() {
-  if (!hasKnownVersion(currentVersion)) {
+  if (!hasKnownBuildId(currentCommitSha)) {
     return;
   }
 
@@ -296,10 +282,10 @@ async function checkForUpdate() {
     }
 
     const payload = await response.json();
-    const remoteVersion = normalizeVersion(payload.version);
+    const remoteCommitSha = normalizeBuildId(payload.commitSha);
 
-    if (hasKnownVersion(remoteVersion) && remoteVersion !== currentVersion) {
-      revealUpdateNotice(remoteVersion);
+    if (hasKnownBuildId(remoteCommitSha) && remoteCommitSha !== currentCommitSha) {
+      revealUpdateNotice(payload.version);
     }
   } catch (error) {
     console.debug("Version check failed", error);
@@ -386,7 +372,6 @@ document.addEventListener("keydown", (event) => {
 restartButton.addEventListener("click", startGame);
 refreshButton.addEventListener("click", () => window.location.reload());
 
-bootstrapVersionState();
 startGame();
 void loadRemoteState();
 window.setTimeout(checkForUpdate, 5_000);

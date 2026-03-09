@@ -43,6 +43,9 @@ Before enabling the project in Symphony or the platform registry:
 - make sure the Linear workflow includes `Todo`, `In Progress`, `Human Review`,
   `Rework`, `Merging`, and terminal done/closed states
 - keep `Human Review` in `active_states`: it remains a human waiting state semantically, but Symphony uses it to keep the agent alive for automated PR review/polling and auto-return to `Rework`
+- keep the hidden PR marker `<!-- linear-issue: <identifier> -->` populated
+  with the source Linear issue identifier so post-deploy incident handling can
+  map a merged commit back to the original ticket
 - keep `.symphony/WORKFLOW.md`, `AGENTS.md`, `README.md`, `.env.example`, and
   deploy docs aligned when the runtime or delivery contract changes
 - keep the managed workflow sandbox at `danger-full-access` while validation depends on host Docker and the GitHub App broker socket outside the workspace
@@ -133,6 +136,8 @@ Browser verification checklist:
 
 - load `http://127.0.0.1:8081`
 - confirm the page renders the snake canvas and HUD
+- confirm `Version` shows the human-readable app version while build detection
+  stays internal to `commitSha`
 - move the snake with arrow keys
 - crash once and confirm `Server Best` updates after the run
 - click `Restart` and confirm a fresh game starts
@@ -140,11 +145,18 @@ Browser verification checklist:
 ## Demo Deployment
 
 - `.env.example` documents the runtime contract used by the deploy workflow.
+- `site/version.json` publishes the user-facing `version` plus the canonical
+  deploy identity `commitSha`.
 - `scripts/smoke-test.sh` exercises the full stack locally.
 - `scripts/smoke-test.sh` also supports managed-runner overrides through
   `DEMO_SMOKE_TARGET_HOST`, `DEMO_SMOKE_TARGET_PORT`, and
   `DEMO_SMOKE_COMPOSE_PROJECT_NAME`.
 - `scripts/deploy-remote.sh` is the entrypoint used on the demo host.
+- `.github/workflows/deploy-demo.yml` runs the mainline in order:
+  reusable CI -> remote deploy -> public `commitSha` witness -> browser probe ->
+  incident handling / safe revert.
+- Post-deploy incident handling depends on the hidden PR marker
+  `<!-- linear-issue: <identifier> -->` and the `LINEAR_API_KEY` GitHub secret.
 - `docs/demo-deploy.md` lists the required GitHub variables, secrets, and the
   one-time host bootstrap steps.
 

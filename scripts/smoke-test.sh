@@ -85,7 +85,11 @@ status_code="$(
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
     "${base_url}/" \
-    | grep -q 'id="game-board"'
+    > /tmp/crowd-snake-smoke-index.html
+
+grep -q 'id="game-board"' /tmp/crowd-snake-smoke-index.html
+grep -q 'data-app-commit-sha="local-dev"' /tmp/crowd-snake-smoke-index.html
+grep -q 'New build ready:' /tmp/crowd-snake-smoke-index.html
 
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
