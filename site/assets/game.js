@@ -17,6 +17,14 @@ const DANGER_FOOD_LIFETIME_MAX_MS = 30_000;
 const SLOW_FOOD_SPAWN_MIN_MS = 1_000;
 const SLOW_FOOD_SPAWN_MAX_MS = 30_000;
 const SLOW_FOOD_LIFETIME_MS = 5_000;
+const PURPLE_FOOD_SPAWN_MIN_MS = 1_000;
+const PURPLE_FOOD_SPAWN_MAX_MS = 30_000;
+const PURPLE_FOOD_LIFETIME_MS = 5_000;
+const PURPLE_FOOD_BLINK_MS = 1_000;
+const BASE_FOOD_VALUE = 1;
+const DANGER_FOOD_VALUE = 3;
+const SLOW_FOOD_VALUE = -1;
+const PURPLE_FOOD_VALUE = 2;
 const UPDATE_CHECK_MS = 30_000;
 const UNKNOWN_VALUE = "unknown";
 const NA_VALUE = "n/a";
@@ -136,6 +144,8 @@ const state = {
   obstacleCells: [],
   dangerFood: null,
   slowFood: null,
+  purpleFood: null,
+  purpleFoodSpawnedAt: 0,
   score: 0,
   loopMs: LOOP_MS,
   tickHandle: null,
@@ -146,12 +156,14 @@ const state = {
   slowFoodSpawnHandle: null,
   slowFoodDespawnHandle: null,
   isGameOver: true,
+  purpleFoodSpawnHandle: null,
+  purpleFoodDespawnHandle: null,
   hasUpdateNotice: false,
   remoteBestScore: null,
   remoteBestNickname: null,
   nickname: loadStoredNickname(),
   isSyncInFlight: false,
-  statusText: "Running",
+  statusText: "Press Space",
 };
 
 function sameCell(left, right) {
@@ -209,6 +221,19 @@ function hasSlowFood() {
   return state.slowFood !== null;
 }
 
+function hasPurpleFood() {
+  return state.purpleFood !== null;
+}
+
+function isPurpleFoodVisible(now = Date.now()) {
+  if (!hasPurpleFood()) {
+    return false;
+  }
+
+  const elapsed = Math.max(0, now - state.purpleFoodSpawnedAt);
+  return Math.floor(elapsed / PURPLE_FOOD_BLINK_MS) % 2 === 0;
+}
+
 function spawnFood() {
   let candidate = randomCell();
 
@@ -216,7 +241,8 @@ function spawnFood() {
     state.snake.some((segment) => sameCell(segment, candidate)) ||
     obstacleContainsCell(candidate) ||
     (hasDangerFood() && sameCell(state.dangerFood, candidate)) ||
-    (hasSlowFood() && sameCell(state.slowFood, candidate))
+    (hasSlowFood() && sameCell(state.slowFood, candidate)) ||
+    (hasPurpleFood() && sameCell(state.purpleFood, candidate))
   ) {
     candidate = randomCell();
   }
@@ -272,7 +298,8 @@ function isObstacleCandidateValid(candidateCells) {
       !state.snake.some((segment) => sameCell(segment, cell)) &&
       !sameCell(state.food, cell) &&
       (!hasDangerFood() || !sameCell(state.dangerFood, cell)) &&
-      (!hasSlowFood() || !sameCell(state.slowFood, cell))
+      (!hasSlowFood() || !sameCell(state.slowFood, cell)) &&
+      (!hasPurpleFood() || !sameCell(state.purpleFood, cell))
     );
   });
 }
@@ -349,6 +376,18 @@ function clearSlowFoodTimers() {
   if (state.slowFoodDespawnHandle !== null) {
     window.clearTimeout(state.slowFoodDespawnHandle);
     state.slowFoodDespawnHandle = null;
+  }
+}
+
+function clearPurpleFoodTimers() {
+  if (state.purpleFoodSpawnHandle !== null) {
+    window.clearTimeout(state.purpleFoodSpawnHandle);
+    state.purpleFoodSpawnHandle = null;
+  }
+
+  if (state.purpleFoodDespawnHandle !== null) {
+    window.clearTimeout(state.purpleFoodDespawnHandle);
+    state.purpleFoodDespawnHandle = null;
   }
 }
 
@@ -501,6 +540,84 @@ function despawnSlowFood() {
   scheduleNextSlowFoodSpawn();
 }
 
+function schedulePurpleFoodDespawn() {
+  if (state.isGameOver || !hasPurpleFood()) {
+    return;
+  }
+
+  state.purpleFoodDespawnHandle = window.setTimeout(() => {
+    state.purpleFoodDespawnHandle = null;
+    despawnPurpleFood();
+  }, PURPLE_FOOD_LIFETIME_MS);
+}
+
+function scheduleNextPurpleFoodSpawn() {
+  if (state.isGameOver || hasPurpleFood()) {
+    return;
+  }
+
+  const delay = randomIntInclusive(
+    PURPLE_FOOD_SPAWN_MIN_MS,
+    PURPLE_FOOD_SPAWN_MAX_MS,
+  );
+
+  state.purpleFoodSpawnHandle = window.setTimeout(() => {
+    state.purpleFoodSpawnHandle = null;
+    spawnPurpleFood();
+  }, delay);
+}
+
+function spawnPurpleFood() {
+  if (state.isGameOver || hasPurpleFood()) {
+    return;
+  }
+
+  const maxAttempts = 200;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = randomCell();
+
+    if (state.snake.some((segment) => sameCell(segment, candidate))) {
+      continue;
+    }
+
+    if (sameCell(state.food, candidate)) {
+      continue;
+    }
+
+    if (obstacleContainsCell(candidate)) {
+      continue;
+    }
+
+    if (hasDangerFood() && sameCell(state.dangerFood, candidate)) {
+      continue;
+    }
+
+    if (hasSlowFood() && sameCell(state.slowFood, candidate)) {
+      continue;
+    }
+
+    state.purpleFood = candidate;
+    state.purpleFoodSpawnedAt = Date.now();
+    draw();
+    schedulePurpleFoodDespawn();
+    return;
+  }
+
+  scheduleNextPurpleFoodSpawn();
+}
+
+function despawnPurpleFood() {
+  if (state.isGameOver || !hasPurpleFood()) {
+    return;
+  }
+
+  state.purpleFood = null;
+  state.purpleFoodSpawnedAt = 0;
+  draw();
+  scheduleNextPurpleFoodSpawn();
+}
+
 function drawGrid() {
   context.strokeStyle = "rgba(153, 255, 153, 0.08)";
   context.lineWidth = 1;
@@ -534,6 +651,22 @@ function drawCell(cell, fillStyle) {
   );
 }
 
+function drawLabeledCell(cell, fillStyle, label, textColor = "#061022") {
+  drawCell(cell, fillStyle);
+
+  context.save();
+  context.fillStyle = textColor;
+  context.font = 'bold 10px "Cascadia Mono", "SFMono-Regular", monospace';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(
+    label,
+    cell.x * CELL_SIZE + CELL_SIZE / 2,
+    cell.y * CELL_SIZE + CELL_SIZE / 2 + 0.5,
+  );
+  context.restore();
+}
+
 function drawGameOver() {
   context.fillStyle = "rgba(4, 11, 20, 0.74)";
   context.fillRect(0, board.height / 2 - 38, board.width, 76);
@@ -558,12 +691,20 @@ function draw() {
   drawGrid();
   state.obstacleCells.forEach((cell) => drawCell(cell, "#868d94"));
   if (hasDangerFood()) {
-    drawCell(state.dangerFood, "#ff4f4f");
+    drawLabeledCell(state.dangerFood, "#ff4f4f", String(DANGER_FOOD_VALUE), "#fff5f5");
   }
   if (hasSlowFood()) {
-    drawCell(state.slowFood, "#4f93ff");
+    drawLabeledCell(state.slowFood, "#4f93ff", String(SLOW_FOOD_VALUE), "#f7fbff");
   }
-  drawCell(state.food, "#ffd36a");
+  if (hasPurpleFood() && isPurpleFoodVisible()) {
+    drawLabeledCell(
+      state.purpleFood,
+      "#b14dff",
+      String(PURPLE_FOOD_VALUE),
+      "#fbf5ff",
+    );
+  }
+  drawLabeledCell(state.food, "#ffd36a", String(BASE_FOOD_VALUE));
 
   state.snake.forEach((segment, index) => {
     const color = index === 0 ? "#c7ff7b" : "#6df04e";
@@ -592,6 +733,7 @@ function stopLoop() {
   clearObstacleTimers();
   clearDangerFoodTimers();
   clearSlowFoodTimers();
+  clearPurpleFoodTimers();
 }
 
 function applyDangerFoodSpeedBoost() {
@@ -612,7 +754,28 @@ function endGame() {
   void syncRemoteBestScore();
 }
 
+function resetBoardState() {
+  const center = Math.floor(GRID_SIZE / 2);
+
+  state.snake = [
+    { x: center, y: center },
+    { x: center - 1, y: center },
+    { x: center - 2, y: center },
+  ];
+  state.direction = { x: 1, y: 0 };
+  state.nextDirection = { x: 1, y: 0 };
+  state.score = 0;
+  state.obstacleCells = [];
+  state.loopMs = LOOP_MS;
+  state.dangerFood = null;
+  state.slowFood = null;
+  state.purpleFood = null;
+  state.purpleFoodSpawnedAt = 0;
+  spawnFood();
+}
+
 function step() {
+  const now = Date.now();
   state.direction = { ...state.nextDirection };
 
   const head = state.snake[0];
@@ -623,7 +786,10 @@ function step() {
   const ateFood = sameCell(nextHead, state.food);
   const ateDangerFood = hasDangerFood() && sameCell(nextHead, state.dangerFood);
   const ateSlowFood = hasSlowFood() && sameCell(nextHead, state.slowFood);
-  const willGrow = ateFood || ateDangerFood || ateSlowFood;
+  const touchedPurpleFood = hasPurpleFood() && sameCell(nextHead, state.purpleFood);
+  const atePurpleFood = touchedPurpleFood && isPurpleFoodVisible(now);
+  const hidPurpleFood = touchedPurpleFood && !atePurpleFood;
+  const willGrow = ateFood || ateDangerFood || ateSlowFood || atePurpleFood;
   const occupiedCells = willGrow ? state.snake : state.snake.slice(0, -1);
 
   const crashed =
@@ -642,7 +808,25 @@ function step() {
   state.snake.unshift(nextHead);
 
   if (willGrow) {
-    state.score += 1;
+    let scoreDelta = 0;
+
+    if (ateFood) {
+      scoreDelta += BASE_FOOD_VALUE;
+    }
+
+    if (ateDangerFood) {
+      scoreDelta += DANGER_FOOD_VALUE;
+    }
+
+    if (ateSlowFood) {
+      scoreDelta += SLOW_FOOD_VALUE;
+    }
+
+    if (atePurpleFood) {
+      scoreDelta += PURPLE_FOOD_VALUE;
+    }
+
+    state.score += scoreDelta;
     updateHud("Running");
 
     if (ateFood) {
@@ -662,8 +846,22 @@ function step() {
       scheduleNextSlowFoodSpawn();
       applySlowFoodSpeedReduction();
     }
+
+    if (atePurpleFood) {
+      state.purpleFood = null;
+      state.purpleFoodSpawnedAt = 0;
+      clearPurpleFoodTimers();
+      scheduleNextPurpleFoodSpawn();
+    }
   } else {
     state.snake.pop();
+  }
+
+  if (hidPurpleFood) {
+    state.purpleFood = null;
+    state.purpleFoodSpawnedAt = 0;
+    clearPurpleFoodTimers();
+    scheduleNextPurpleFoodSpawn();
   }
 
   draw();
@@ -671,26 +869,12 @@ function step() {
 
 function startGame() {
   stopLoop();
-
-  const center = Math.floor(GRID_SIZE / 2);
-
-  state.snake = [
-    { x: center, y: center },
-    { x: center - 1, y: center },
-    { x: center - 2, y: center },
-  ];
-  state.direction = { x: 1, y: 0 };
-  state.nextDirection = { x: 1, y: 0 };
-  state.score = 0;
-  state.obstacleCells = [];
-  state.loopMs = LOOP_MS;
-  state.dangerFood = null;
-  state.slowFood = null;
+  resetBoardState();
   state.isGameOver = false;
 
-  spawnFood();
   scheduleNextDangerFoodSpawn();
   scheduleNextSlowFoodSpawn();
+  scheduleNextPurpleFoodSpawn();
   updateHud("Running");
   draw();
   scheduleNextObstacleSpawn();
@@ -889,6 +1073,9 @@ nicknameInputNode.addEventListener("keydown", (event) => {
 });
 
 setNickname(state.nickname);
+resetBoardState();
+draw();
+updateHud("Press Space");
 // Game no longer auto-starts; user must press Space to begin.
 void loadRemoteState();
 window.setTimeout(checkForUpdate, 5_000);
