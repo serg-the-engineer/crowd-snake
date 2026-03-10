@@ -71,12 +71,15 @@ query CommentCreateInputShape {
 
 ## Common workflows
 
-### Query an issue by key, identifier, or id
+### Query an issue by key or id
 
 Use these progressively:
 
-- Start with `issue(id: $key)` when you have a ticket key such as `MT-686`.
-- Fall back to `issues(filter: ...)` when you need identifier search semantics.
+- For Symphony/Linear ticket keys such as `MT-686` or `RT-15`, always start
+  with `issue(id: $key)`.
+- Do not start with `issues(filter: { identifier: ... })` unless targeted
+  introspection has already confirmed that `IssueFilter.identifier` exists on
+  the current Linear schema.
 - Once you have the internal issue id, prefer `issue(id: $id)` for narrower reads.
 
 Lookup by issue key:
@@ -111,32 +114,28 @@ query IssueByKey($key: String!) {
 }
 ```
 
-Lookup by identifier filter:
+Read issue comments or the workpad by ticket key:
 
 ```graphql
-query IssueByIdentifier($identifier: String!) {
-  issues(filter: { identifier: { eq: $identifier } }, first: 1) {
-    nodes {
-      id
-      identifier
-      title
-      state {
+query IssueCommentsByKey($key: String!) {
+  issue(id: $key) {
+    id
+    identifier
+    comments {
+      nodes {
         id
-        name
-        type
+        body
+        resolvedAt
+        updatedAt
       }
-      project {
-        id
-        name
-      }
-      branchName
-      url
-      description
-      updatedAt
     }
   }
 }
 ```
+
+If more than one unresolved `## Codex Workpad` comment exists, reuse the most
+recent unresolved comment as the live workpad, merge any unique notes into it,
+and retire the duplicates.
 
 Resolve a key to an internal id:
 
@@ -239,7 +238,11 @@ mutation CreateComment($issueId: String!, $body: String!) {
 
 ### Move an issue to a different state
 
-Use `issueUpdate` with the destination `stateId`:
+Inside Symphony app-server sessions, do not use raw `issueUpdate` for issue
+state changes. Use `symphony_update_issue_state` instead so the state transition
+goes through Symphony's managed tracker path.
+
+Reference shape:
 
 ```graphql
 mutation MoveIssueToState($id: String!, $stateId: String!) {

@@ -91,6 +91,7 @@ Work only in the provided repository copy. Do not touch any other path.
 
 The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, treat that as a blocker: record it in the workpad and stop according to the blocked-access escape hatch.
 - When changing the issue state from inside Symphony, use `symphony_update_issue_state`; do not use raw `linear_graphql` state mutations.
+- When reading the current issue by ticket key (for example `RT-15`), start with `issue(id: $key)`. Do not start with `issues(filter: { identifier: ... })` unless introspection confirmed that filter exists on the current Linear schema.
 
 ## Repository context
 
@@ -172,7 +173,7 @@ not exist, follow the equivalent procedure directly from this workflow.
 
 ## Step 0: Determine current ticket state and route
 
-1. Fetch the issue by explicit ticket ID.
+1. Fetch the issue by explicit ticket key using `issue(id: $key)` (for example `issue(id: "RT-15")`).
 2. Read the current state.
 3. Route to the matching flow:
    - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
@@ -187,8 +188,10 @@ not exist, follow the equivalent procedure directly from this workflow.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
    - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
 5. For `Todo` tickets, do startup sequencing in this exact order:
-   - `update_issue(..., state: "In Progress")`
-   - find/create `## Codex Workpad` bootstrap comment
+   - call `symphony_update_issue_state({"state_name":"In Progress"})`
+   - use the repo-local `linear` skill or `issue(id: $key) { comments { nodes { id body resolvedAt updatedAt } } }` to inspect workpad comments
+   - if multiple unresolved `## Codex Workpad` comments exist, keep the most recently updated unresolved one as the single live workpad and retire duplicates after merging any unique notes
+   - find/create the live `## Codex Workpad` bootstrap comment
    - only then begin analysis/planning/implementation work.
 6. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
 
@@ -198,6 +201,8 @@ not exist, follow the equivalent procedure directly from this workflow.
     - Search existing comments for a marker header: `## Codex Workpad`.
     - Ignore resolved comments while searching; only active/unresolved comments are eligible to be reused as the live workpad.
     - If found, reuse that comment; do not create a new workpad comment.
+    - If multiple unresolved workpads exist, reuse the most recently updated unresolved one as the live workpad.
+    - Merge any unique notes from older unresolved workpads into the live workpad, then resolve or otherwise retire the duplicates so only one unresolved workpad remains.
     - If not found, create one workpad comment and use it for all updates.
     - Persist the workpad comment ID and only write progress updates to that ID.
     - Preserve any content between `<!-- symphony:token-accounting:start -->` and `<!-- symphony:token-accounting:end -->`; Symphony owns that section.
@@ -206,6 +211,7 @@ not exist, follow the equivalent procedure directly from this workflow.
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.
     - Ensure `Acceptance Criteria` and `Validation` are current and still make sense for the task.
+    - A workpad that contains only token accounting is not sufficient; populate the human-readable plan and validation sections before implementation continues.
 4.  Start work by writing/updating a hierarchical plan in the workpad comment.
 5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
     - Format: `<host>:<abs-workdir>@<short-sha>`
