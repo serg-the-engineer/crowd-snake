@@ -14,6 +14,7 @@
 ## Delivery Discipline
 
 - Keep changes single-purpose and update the narrowest relevant check first when changing behavior.
+- Every gameplay logic change must bump the user-facing version in `site/index.html` and `site/version.json`.
 - Keep `README.md` aligned with the real compose/runtime contract.
 - For runtime behavior, compose, nginx, frontend, API, deploy, or docs that describe those surfaces, run `docker compose config -q` and `./scripts/smoke-test.sh`.
 - The `main` deploy contract is sequential: reusable CI, remote deploy, public
