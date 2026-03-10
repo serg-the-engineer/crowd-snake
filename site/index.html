@@ -7,12 +7,13 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
-  <body data-app-version="0.2.15" data-app-commit-sha="local-dev">
+  <body data-app-version="0.2.3" data-app-commit-sha="local-dev">
     <main class="shell">
       <section class="status-panel">
         <div class="notice" id="update-banner" hidden>
           <strong>New build ready:</strong>
           <span id="update-version">refresh to load latest changes</span>
+          <button type="button" id="refresh-button">Refresh page</button>
         </div>
 
         <label class="nickname-control" for="nickname-input">
@@ -35,11 +36,11 @@
           </div>
           <div>
             <span class="label">Status</span>
-            <span class="value" id="status">Press Space</span>
+            <span class="value" id="status">Running</span>
           </div>
           <div>
             <span class="label">Version</span>
-            <span class="value" id="current-version">0.2.15</span>
+            <span class="value" id="current-version">0.2.3</span>
           </div>
           <div>
             <span class="label">Server Best</span>
@@ -62,8 +63,8 @@
         ></canvas>
 
         <div class="controls">
-          <!-- Restart button removed per RT-15 requirements -->
-          <p>Use arrow keys. Press Space to start, then press Space again after a crash.</p>
+          <button type="button" id="restart-button">Restart</button>
+          <p>Use arrow keys. Hit space after a crash to start again.</p>
         </div>
       </section>
     </main>

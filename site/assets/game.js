@@ -44,6 +44,8 @@ const serverBestNicknameNode = document.getElementById("server-best-nickname");
 const nicknameInputNode = document.getElementById("nickname-input");
 const updateBannerNode = document.getElementById("update-banner");
 const updateVersionNode = document.getElementById("update-version");
+const restartButton = document.getElementById("restart-button");
+const refreshButton = document.getElementById("refresh-button");
 const currentVersion = normalizeValue(document.body.dataset.appVersion);
 const currentCommitSha = normalizeBuildId(document.body.dataset.appCommitSha);
 const textEncoder = new TextEncoder();
@@ -155,15 +157,15 @@ const state = {
   dangerFoodDespawnHandle: null,
   slowFoodSpawnHandle: null,
   slowFoodDespawnHandle: null,
-  isGameOver: true,
   purpleFoodSpawnHandle: null,
   purpleFoodDespawnHandle: null,
+  isGameOver: false,
   hasUpdateNotice: false,
   remoteBestScore: null,
   remoteBestNickname: null,
   nickname: loadStoredNickname(),
   isSyncInFlight: false,
-  statusText: "Press Space",
+  statusText: "Running",
 };
 
 function sameCell(left, right) {
@@ -678,8 +680,7 @@ function drawGameOver() {
 
   context.fillStyle = "#9db1ab";
   context.font = '14px "Cascadia Mono", "SFMono-Regular", monospace';
-  // Updated per RT-15: no restart button, start the game with Space only.
-  context.fillText("Press space", board.width / 2, board.height / 2 + 20);
+  context.fillText("Press restart or space", board.width / 2, board.height / 2 + 20);
 }
 
 function draw() {
@@ -752,26 +753,6 @@ function endGame() {
   updateHud("Crashed");
   draw();
   void syncRemoteBestScore();
-}
-
-function resetBoardState() {
-  const center = Math.floor(GRID_SIZE / 2);
-
-  state.snake = [
-    { x: center, y: center },
-    { x: center - 1, y: center },
-    { x: center - 2, y: center },
-  ];
-  state.direction = { x: 1, y: 0 };
-  state.nextDirection = { x: 1, y: 0 };
-  state.score = 0;
-  state.obstacleCells = [];
-  state.loopMs = LOOP_MS;
-  state.dangerFood = null;
-  state.slowFood = null;
-  state.purpleFood = null;
-  state.purpleFoodSpawnedAt = 0;
-  spawnFood();
 }
 
 function step() {
@@ -869,9 +850,26 @@ function step() {
 
 function startGame() {
   stopLoop();
-  resetBoardState();
+
+  const center = Math.floor(GRID_SIZE / 2);
+
+  state.snake = [
+    { x: center, y: center },
+    { x: center - 1, y: center },
+    { x: center - 2, y: center },
+  ];
+  state.direction = { x: 1, y: 0 };
+  state.nextDirection = { x: 1, y: 0 };
+  state.score = 0;
+  state.obstacleCells = [];
+  state.loopMs = LOOP_MS;
+  state.dangerFood = null;
+  state.slowFood = null;
+  state.purpleFood = null;
+  state.purpleFoodSpawnedAt = 0;
   state.isGameOver = false;
 
+  spawnFood();
   scheduleNextDangerFoodSpawn();
   scheduleNextSlowFoodSpawn();
   scheduleNextPurpleFoodSpawn();
@@ -1058,7 +1056,8 @@ document.addEventListener("keydown", (event) => {
   queueDirection(nextDirection);
 });
 
-// Restart button removed per ticket RT-15 requirements.
+restartButton.addEventListener("click", startGame);
+refreshButton.addEventListener("click", () => window.location.reload());
 nicknameInputNode.addEventListener("change", (event) => {
   setNickname(event.target.value);
 });
@@ -1073,10 +1072,7 @@ nicknameInputNode.addEventListener("keydown", (event) => {
 });
 
 setNickname(state.nickname);
-resetBoardState();
-draw();
-updateHud("Press Space");
-// Game no longer auto-starts; user must press Space to begin.
+startGame();
 void loadRemoteState();
 window.setTimeout(checkForUpdate, 5_000);
 window.setInterval(checkForUpdate, UPDATE_CHECK_MS);
