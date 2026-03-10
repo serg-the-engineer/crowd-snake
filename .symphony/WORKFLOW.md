@@ -97,6 +97,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - This repository is `crowd-snake`.
 - Do not reintroduce historical project names.
 - Do not add workflow, docs, or runtime dependencies on removed sidecar services.
+- Every gameplay logic change must bump the user-facing version in `site/index.html` and `site/version.json`.
 - PR bodies in this repo must include the hidden marker
   `<!-- linear-issue: <identifier> -->` with the current Linear issue
   identifier so post-deploy incident handling can map merged commits back to
