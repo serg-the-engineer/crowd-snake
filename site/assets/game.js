@@ -36,8 +36,6 @@ const serverBestNicknameNode = document.getElementById("server-best-nickname");
 const nicknameInputNode = document.getElementById("nickname-input");
 const updateBannerNode = document.getElementById("update-banner");
 const updateVersionNode = document.getElementById("update-version");
-const restartButton = document.getElementById("restart-button");
-const refreshButton = document.getElementById("refresh-button");
 const currentVersion = normalizeValue(document.body.dataset.appVersion);
 const currentCommitSha = normalizeBuildId(document.body.dataset.appCommitSha);
 const textEncoder = new TextEncoder();
@@ -147,7 +145,7 @@ const state = {
   dangerFoodDespawnHandle: null,
   slowFoodSpawnHandle: null,
   slowFoodDespawnHandle: null,
-  isGameOver: false,
+  isGameOver: true,
   hasUpdateNotice: false,
   remoteBestScore: null,
   remoteBestNickname: null,
@@ -875,8 +873,7 @@ document.addEventListener("keydown", (event) => {
   queueDirection(nextDirection);
 });
 
-restartButton.addEventListener("click", startGame);
-refreshButton.addEventListener("click", () => window.location.reload());
+// Restart button removed per ticket RT-15 requirements.
 nicknameInputNode.addEventListener("change", (event) => {
   setNickname(event.target.value);
 });
@@ -891,7 +888,7 @@ nicknameInputNode.addEventListener("keydown", (event) => {
 });
 
 setNickname(state.nickname);
-startGame();
+// Game no longer auto-starts; user must press Space to begin.
 void loadRemoteState();
 window.setTimeout(checkForUpdate, 5_000);
 window.setInterval(checkForUpdate, UPDATE_CHECK_MS);
