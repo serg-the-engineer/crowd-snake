@@ -17,6 +17,9 @@ const DANGER_FOOD_LIFETIME_MAX_MS = 30_000;
 const SLOW_FOOD_SPAWN_MIN_MS = 1_000;
 const SLOW_FOOD_SPAWN_MAX_MS = 30_000;
 const SLOW_FOOD_LIFETIME_MS = 5_000;
+const BASE_FOOD_VALUE = 1;
+const DANGER_FOOD_VALUE = 3;
+const SLOW_FOOD_VALUE = -1;
 const UPDATE_CHECK_MS = 30_000;
 const UNKNOWN_VALUE = "unknown";
 const NA_VALUE = "n/a";
@@ -536,6 +539,22 @@ function drawCell(cell, fillStyle) {
   );
 }
 
+function drawLabeledCell(cell, fillStyle, label, textColor = "#061022") {
+  drawCell(cell, fillStyle);
+
+  context.save();
+  context.fillStyle = textColor;
+  context.font = 'bold 10px "Cascadia Mono", "SFMono-Regular", monospace';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(
+    label,
+    cell.x * CELL_SIZE + CELL_SIZE / 2,
+    cell.y * CELL_SIZE + CELL_SIZE / 2 + 0.5,
+  );
+  context.restore();
+}
+
 function drawGameOver() {
   context.fillStyle = "rgba(4, 11, 20, 0.74)";
   context.fillRect(0, board.height / 2 - 38, board.width, 76);
@@ -559,12 +578,12 @@ function draw() {
   drawGrid();
   state.obstacleCells.forEach((cell) => drawCell(cell, "#868d94"));
   if (hasDangerFood()) {
-    drawCell(state.dangerFood, "#ff4f4f");
+    drawLabeledCell(state.dangerFood, "#ff4f4f", String(DANGER_FOOD_VALUE), "#fff5f5");
   }
   if (hasSlowFood()) {
-    drawCell(state.slowFood, "#4f93ff");
+    drawLabeledCell(state.slowFood, "#4f93ff", String(SLOW_FOOD_VALUE), "#f7fbff");
   }
-  drawCell(state.food, "#ffd36a");
+  drawLabeledCell(state.food, "#ffd36a", String(BASE_FOOD_VALUE));
 
   state.snake.forEach((segment, index) => {
     const color = index === 0 ? "#c7ff7b" : "#6df04e";
@@ -643,7 +662,21 @@ function step() {
   state.snake.unshift(nextHead);
 
   if (willGrow) {
-    state.score += 1;
+    let scoreDelta = 0;
+
+    if (ateFood) {
+      scoreDelta += BASE_FOOD_VALUE;
+    }
+
+    if (ateDangerFood) {
+      scoreDelta += DANGER_FOOD_VALUE;
+    }
+
+    if (ateSlowFood) {
+      scoreDelta += SLOW_FOOD_VALUE;
+    }
+
+    state.score += scoreDelta;
     updateHud("Running");
 
     if (ateFood) {
