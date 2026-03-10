@@ -545,7 +545,8 @@ function drawGameOver() {
 
   context.fillStyle = "#9db1ab";
   context.font = '14px "Cascadia Mono", "SFMono-Regular", monospace';
-  context.fillText("Press restart or space", board.width / 2, board.height / 2 + 20);
+  // Updated per RT-15: no restart button, start the game with Space only.
+  context.fillText("Press space", board.width / 2, board.height / 2 + 20);
 }
 
 function draw() {
