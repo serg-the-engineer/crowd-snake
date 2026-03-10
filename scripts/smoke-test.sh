@@ -102,16 +102,68 @@ curl --fail --silent --show-error \
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
     "${base_url}/api/state" \
-    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["bestScore"] == 0'
+    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["bestScore"] == 0; assert payload["bestNickname"] == "anonymous"'
+
+post_without_challenge_status="$(
+    curl --silent --output /dev/null --write-out "%{http_code}" \
+        --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+        --header "Content-Type: application/json" \
+        --data '{"bestScore": 17, "nickname": "manual"}' \
+        "${base_url}/api/state"
+)"
+[ "${post_without_challenge_status}" = "400" ]
+
+challenge_payload="$(
+    curl --fail --silent --show-error \
+        --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+        "${base_url}/api/challenge"
+)"
+
+protected_payload="$(
+    CHALLENGE_PAYLOAD="${challenge_payload}" SCORE="17" NICKNAME="ci-bot" python3 - <<'PY'
+import json
+import os
+
+challenge = json.loads(os.environ["CHALLENGE_PAYLOAD"])
+score = int(os.environ["SCORE"])
+nickname = os.environ["NICKNAME"]
+difficulty = max(int(challenge["difficulty"]), 1)
+target = "0" * difficulty
+prefix = f"{challenge['challengeId']}:{challenge['nonce']}:{nickname}:{score}:"
+
+def fnv1a_32(text):
+    result = 2166136261
+    for byte in text.encode("utf-8"):
+        result ^= byte
+        result = (result * 16777619) & 0xFFFFFFFF
+    return f"{result:08x}"
+
+for proof_nonce in range(2_000_000):
+    if fnv1a_32(f"{prefix}{proof_nonce}").startswith(target):
+        print(
+            json.dumps(
+                {
+                    "bestScore": score,
+                    "nickname": nickname,
+                    "challengeId": challenge["challengeId"],
+                    "proofNonce": proof_nonce,
+                }
+            )
+        )
+        break
+else:
+    raise RuntimeError("failed to solve challenge in smoke test")
+PY
+)"
 
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
     --header "Content-Type: application/json" \
-    --data '{"bestScore": 17}' \
+    --data "${protected_payload}" \
     "${base_url}/api/state" \
-    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["bestScore"] == 17'
+    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["bestScore"] == 17; assert payload["bestNickname"] == "ci-bot"'
 
 curl --fail --silent --show-error \
     --user "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
     "${base_url}/api/state" \
-    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["bestScore"] == 17'
+    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["bestScore"] == 17; assert payload["bestNickname"] == "ci-bot"'

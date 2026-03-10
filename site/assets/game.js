@@ -17,6 +17,10 @@ const UPDATE_CHECK_MS = 30_000;
 const UNKNOWN_VALUE = "unknown";
 const NA_VALUE = "n/a";
 const BUILD_NOTICE_FALLBACK = "refresh to load latest changes";
+const DEFAULT_NICKNAME = "anonymous";
+const MAX_NICKNAME_LENGTH = 24;
+const NICKNAME_STORAGE_KEY = "crowd-snake:nickname";
+const CHALLENGE_SOLVE_MAX_ATTEMPTS = 2_000_000;
 
 const board = document.getElementById("game-board");
 const context = board.getContext("2d");
@@ -24,12 +28,15 @@ const scoreNode = document.getElementById("score");
 const statusNode = document.getElementById("status");
 const currentVersionNode = document.getElementById("current-version");
 const serverBestNode = document.getElementById("server-best");
+const serverBestNicknameNode = document.getElementById("server-best-nickname");
+const nicknameInputNode = document.getElementById("nickname-input");
 const updateBannerNode = document.getElementById("update-banner");
 const updateVersionNode = document.getElementById("update-version");
 const restartButton = document.getElementById("restart-button");
 const refreshButton = document.getElementById("refresh-button");
 const currentVersion = normalizeValue(document.body.dataset.appVersion);
 const currentCommitSha = normalizeBuildId(document.body.dataset.appCommitSha);
+const textEncoder = new TextEncoder();
 
 function normalizeValue(value) {
   if (typeof value !== "string") {
@@ -70,6 +77,55 @@ function formatUpdateLabel(nextVersion) {
   return BUILD_NOTICE_FALLBACK;
 }
 
+function normalizeNickname(value) {
+  if (typeof value !== "string") {
+    return DEFAULT_NICKNAME;
+  }
+
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (normalized.length === 0) {
+    return DEFAULT_NICKNAME;
+  }
+
+  return normalized.slice(0, MAX_NICKNAME_LENGTH);
+}
+
+function loadStoredNickname() {
+  try {
+    const savedNickname = window.localStorage.getItem(NICKNAME_STORAGE_KEY);
+    return normalizeNickname(savedNickname);
+  } catch (error) {
+    return DEFAULT_NICKNAME;
+  }
+}
+
+function saveNickname(nickname) {
+  try {
+    window.localStorage.setItem(NICKNAME_STORAGE_KEY, nickname);
+  } catch (error) {
+    // Ignore localStorage failures in private mode.
+  }
+}
+
+function setNickname(nextNickname) {
+  const normalizedNickname = normalizeNickname(nextNickname);
+  state.nickname = normalizedNickname;
+  nicknameInputNode.value = normalizedNickname;
+  saveNickname(normalizedNickname);
+}
+
+function fnv1a32(text) {
+  let hash = 0x811c9dc5;
+  const bytes = textEncoder.encode(text);
+
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return hash.toString(16).padStart(8, "0");
+}
+
 const state = {
   snake: [],
   direction: { x: 1, y: 0 },
@@ -87,6 +143,9 @@ const state = {
   isGameOver: false,
   hasUpdateNotice: false,
   remoteBestScore: null,
+  remoteBestNickname: null,
+  nickname: loadStoredNickname(),
+  isSyncInFlight: false,
   statusText: "Running",
 };
 
@@ -106,6 +165,8 @@ function updateHud(statusText) {
     : "--";
   serverBestNode.textContent =
     state.remoteBestScore === null ? "--" : String(state.remoteBestScore);
+  serverBestNicknameNode.textContent =
+    state.remoteBestNickname === null ? "--" : state.remoteBestNickname;
 }
 
 function randomCell() {
@@ -484,8 +545,6 @@ function step() {
       scheduleNextDangerFoodSpawn();
       applyDangerFoodSpeedBoost();
     }
-
-    void syncRemoteBestScore();
   } else {
     state.snake.pop();
   }
@@ -580,6 +639,7 @@ async function loadRemoteState() {
 
     if (typeof payload.bestScore === "number") {
       state.remoteBestScore = payload.bestScore;
+      state.remoteBestNickname = normalizeNickname(payload.bestNickname);
       updateHud();
     }
   } catch (error) {
@@ -587,24 +647,73 @@ async function loadRemoteState() {
   }
 }
 
+async function fetchChallenge() {
+  const response = await window.fetch("/api/challenge", {
+    headers: { Accept: "application/json" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Challenge request failed with status ${response.status}`);
+  }
+
+  const payload = await response.json();
+  if (
+    typeof payload.challengeId !== "string" ||
+    typeof payload.nonce !== "string" ||
+    typeof payload.difficulty !== "number"
+  ) {
+    throw new Error("Challenge payload is malformed");
+  }
+
+  return payload;
+}
+
+function solveProofNonce(challenge, candidateScore, nickname) {
+  const targetPrefix = "0".repeat(Math.max(1, challenge.difficulty));
+  const messagePrefix = `${challenge.challengeId}:${challenge.nonce}:${nickname}:${candidateScore}:`;
+
+  for (let proofNonce = 0; proofNonce < CHALLENGE_SOLVE_MAX_ATTEMPTS; proofNonce += 1) {
+    const fingerprint = fnv1a32(`${messagePrefix}${proofNonce}`);
+    if (fingerprint.startsWith(targetPrefix)) {
+      return proofNonce;
+    }
+  }
+
+  throw new Error("Unable to solve challenge within local attempt limit");
+}
+
 async function syncRemoteBestScore() {
   const candidate = state.score;
 
-  if (state.remoteBestScore !== null && candidate <= state.remoteBestScore) {
+  if (
+    state.isSyncInFlight ||
+    (state.remoteBestScore !== null && candidate <= state.remoteBestScore)
+  ) {
     return;
   }
 
+  state.isSyncInFlight = true;
+
   try {
+    const challenge = await fetchChallenge();
+    const proofNonce = solveProofNonce(challenge, candidate, state.nickname);
     const response = await window.fetch("/api/state", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ bestScore: candidate }),
+      body: JSON.stringify({
+        bestScore: candidate,
+        nickname: state.nickname,
+        challengeId: challenge.challengeId,
+        proofNonce,
+      }),
     });
 
     if (!response.ok) {
+      const details = await response.text();
+      console.debug("State sync rejected", response.status, details);
       return;
     }
 
@@ -612,10 +721,13 @@ async function syncRemoteBestScore() {
 
     if (typeof payload.bestScore === "number") {
       state.remoteBestScore = payload.bestScore;
+      state.remoteBestNickname = normalizeNickname(payload.bestNickname);
       updateHud();
     }
   } catch (error) {
     console.debug("State sync failed", error);
+  } finally {
+    state.isSyncInFlight = false;
   }
 }
 
@@ -645,7 +757,20 @@ document.addEventListener("keydown", (event) => {
 
 restartButton.addEventListener("click", startGame);
 refreshButton.addEventListener("click", () => window.location.reload());
+nicknameInputNode.addEventListener("change", (event) => {
+  setNickname(event.target.value);
+});
+nicknameInputNode.addEventListener("blur", (event) => {
+  setNickname(event.target.value);
+});
+nicknameInputNode.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    nicknameInputNode.blur();
+  }
+});
 
+setNickname(state.nickname);
 startGame();
 void loadRemoteState();
 window.setTimeout(checkForUpdate, 5_000);

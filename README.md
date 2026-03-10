@@ -9,13 +9,41 @@ Standalone `crowd-snake` demo project. It runs as an independent Docker Compose 
 - `db`: Postgres, listens on `5433` inside the compose network
 - `redis`: Redis, listens on `6380` inside the compose network
 
-The API uses Postgres as the source of truth and Redis as a cache for the shared "Server Best" score.
+The API uses Postgres as the source of truth and Redis as a cache for the shared "Server Best" score + nickname.
 
 ## API
 
 - `GET /healthz`
 - `GET /api/state`
+- `GET /api/challenge`
 - `POST /api/state`
+
+`POST /api/state` requires a challenge proof from `GET /api/challenge`.
+
+### Update Protection Logic
+
+This demo still does not implement real user accounts, but it now adds a
+challenge-response gate so a single manual `curl` cannot trivially overwrite
+`server best`.
+
+Flow:
+
+1. Client requests `GET /api/challenge` and receives:
+   - one-time `challengeId`
+   - random `nonce`
+   - `difficulty`
+   - short expiry timestamp
+2. Client computes `proofNonce` locally by brute-forcing a hash target:
+   - hash input = `<challengeId>:<nonce>:<nickname>:<bestScore>:<proofNonce>`
+   - hash function = FNV-1a 32-bit
+   - valid proof starts with `difficulty` leading `0` hex chars
+3. Client submits `POST /api/state` with `bestScore`, `nickname`,
+   `challengeId`, and `proofNonce`.
+4. Server verifies proof and challenge freshness, then consumes the challenge
+   (one-time use) before storing a new best score.
+
+This is anti-abuse hardening, not full authentication. Scripted abuse is still
+possible, but naive/manual score overwrites become materially harder.
 
 ## Compose Contract
 
@@ -107,13 +135,89 @@ Manual verification without local auth:
 ```bash
 curl --fail http://127.0.0.1:8081/_healthz
 curl --fail http://127.0.0.1:8081/api/state
+challenge="$(curl --fail --silent http://127.0.0.1:8081/api/challenge)"
+payload="$(CHALLENGE_PAYLOAD="${challenge}" SCORE=17 NICKNAME='local-player' python3 - <<'PY'
+import json
+import os
+
+challenge = json.loads(os.environ["CHALLENGE_PAYLOAD"])
+score = int(os.environ["SCORE"])
+nickname = os.environ["NICKNAME"]
+target = "0" * max(int(challenge["difficulty"]), 1)
+prefix = f"{challenge['challengeId']}:{challenge['nonce']}:{nickname}:{score}:"
+
+def fnv1a_32(text):
+    result = 2166136261
+    for byte in text.encode("utf-8"):
+        result ^= byte
+        result = (result * 16777619) & 0xFFFFFFFF
+    return f"{result:08x}"
+
+for proof_nonce in range(2_000_000):
+    if fnv1a_32(f"{prefix}{proof_nonce}").startswith(target):
+        print(json.dumps({
+            "bestScore": score,
+            "nickname": nickname,
+            "challengeId": challenge["challengeId"],
+            "proofNonce": proof_nonce,
+        }))
+        break
+else:
+    raise RuntimeError("unable to solve challenge")
+PY
+)"
 curl --fail \
   --header "Content-Type: application/json" \
-  --data '{"bestScore":17}' \
+  --data "${payload}" \
   http://127.0.0.1:8081/api/state
 curl --fail http://127.0.0.1:8081/api/state
 ```
 
+Manual verification with local auth enabled:
+
+```bash
+curl --fail -u "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+  http://127.0.0.1:8081/_healthz
+curl --fail -u "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+  http://127.0.0.1:8081/api/state
+challenge="$(curl --fail --silent -u "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+  http://127.0.0.1:8081/api/challenge)"
+payload="$(CHALLENGE_PAYLOAD="${challenge}" SCORE=17 NICKNAME='auth-player' python3 - <<'PY'
+import json
+import os
+
+challenge = json.loads(os.environ["CHALLENGE_PAYLOAD"])
+score = int(os.environ["SCORE"])
+nickname = os.environ["NICKNAME"]
+target = "0" * max(int(challenge["difficulty"]), 1)
+prefix = f"{challenge['challengeId']}:{challenge['nonce']}:{nickname}:{score}:"
+
+def fnv1a_32(text):
+    result = 2166136261
+    for byte in text.encode("utf-8"):
+        result ^= byte
+        result = (result * 16777619) & 0xFFFFFFFF
+    return f"{result:08x}"
+
+for proof_nonce in range(2_000_000):
+    if fnv1a_32(f"{prefix}{proof_nonce}").startswith(target):
+        print(json.dumps({
+            "bestScore": score,
+            "nickname": nickname,
+            "challengeId": challenge["challengeId"],
+            "proofNonce": proof_nonce,
+        }))
+        break
+else:
+    raise RuntimeError("unable to solve challenge")
+PY
+)"
+curl --fail \
+  -u "${DEMO_BASIC_AUTH_USERNAME}:${DEMO_BASIC_AUTH_PASSWORD}" \
+  --header "Content-Type: application/json" \
+  --data "${payload}" \
+  http://127.0.0.1:8081/api/state
+```
 Browser verification checklist:
 
 - load `http://127.0.0.1:8081`
@@ -121,7 +225,7 @@ Browser verification checklist:
 - confirm `Version` shows the human-readable app version while build detection
   stays internal to `commitSha`
 - move the snake with arrow keys
-- crash once and confirm `Server Best` updates after the run
+- set a nickname, crash once, and confirm `Server Best` + `Best By` update
 - click `Restart` and confirm a fresh game starts
 
 ## Demo Deployment
