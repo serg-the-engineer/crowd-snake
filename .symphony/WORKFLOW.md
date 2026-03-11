@@ -35,6 +35,7 @@ hooks:
 agent:
   max_concurrent_agents: 2
   max_turns: 20
+  max_consecutive_no_progress_turns: 5
 execution:
   model_routing:
     default_profile: gpt-5.4
@@ -209,6 +210,7 @@ not exist, follow the equivalent procedure directly from this workflow.
     - Preserve any content between `<!-- symphony:token-accounting:start -->` and `<!-- symphony:token-accounting:end -->`; Symphony owns that section.
 2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
     - If the issue is already `In Progress`, repeated `symphony_update_issue_state({"state_name":"In Progress"})` is a no-op and does not count as progress.
+    - A successful read-only `linear_graphql` `query` also does not count as progress by itself; after reading context, update the workpad or take another concrete action in the same turn.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.
