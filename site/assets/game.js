@@ -113,6 +113,51 @@ function loadStoredNickname() {
   }
 }
 
+function loadStoredBgColor() {
+  try {
+    const saved = window.localStorage.getItem(BGCOLOR_STORAGE_KEY);
+    return saved || "dark";
+  } catch (e) {
+    return "dark";
+  }
+}
+
+function saveBgColor(val) {
+  try {
+    window.localStorage.setItem(BGCOLOR_STORAGE_KEY, val);
+  } catch (e) {}
+}
+
+function applyBgColor(val) {
+  const cfg = BG_COLOR_MAP[val] || BG_COLOR_MAP["dark"];
+  currentBgColor = cfg.bg;
+  currentGridColor = cfg.grid;
+}
+
+function setBgColor(val) {
+  applyBgColor(val);
+  bgColorSelectNode.value = val;
+  saveBgColor(val);
+}
+
+const BG_COLOR_MAP = {
+  dark: {bg: "rgba(6, 12, 22, 0.94)", grid: "rgba(153, 255, 153, 0.08)"},
+  black: {bg: "#000000", grid: "rgba(255,255,255,0.1)"},
+  white: {bg: "#ffffff", grid: "rgba(0,0,0,0.1)"},
+  gray1: {bg: "#555555", grid: "rgba(255,255,255,0.08)"},
+  gray2: {bg: "#999999", grid: "rgba(0,0,0,0.08)"}
+};
+
+let currentBgColor = BG_COLOR_MAP["dark"].bg;
+let currentGridColor = BG_COLOR_MAP["dark"].grid;
+
+bgColorSelectNode.addEventListener("change", (e) => {
+  setBgColor(e.target.value);
+});
+
+const storedBg = loadStoredBgColor();
+setBgColor(storedBg);
+
 function saveNickname(nickname) {
   try {
     window.localStorage.setItem(NICKNAME_STORAGE_KEY, nickname);
@@ -623,7 +668,7 @@ function despawnPurpleFood() {
 }
 
 function drawGrid() {
-  context.strokeStyle = "rgba(153, 255, 153, 0.08)";
+  context.strokeStyle = currentGridColor;
   context.lineWidth = 1;
 
   for (let i = 1; i < GRID_SIZE; i += 1) {
@@ -687,7 +732,7 @@ function drawGameOver() {
 
 function draw() {
   context.clearRect(0, 0, board.width, board.height);
-
+  context.fillStyle = currentBgColor;
   context.fillStyle = "rgba(6, 12, 22, 0.94)";
   context.fillRect(0, 0, board.width, board.height);
 
