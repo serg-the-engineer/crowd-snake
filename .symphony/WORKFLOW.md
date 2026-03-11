@@ -180,7 +180,7 @@ not exist, follow the equivalent procedure directly from this workflow.
    - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
    - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
-   - `In Progress` -> continue execution flow from current scratchpad comment.
+   - `In Progress` -> continue execution flow from current scratchpad comment. Do not call `symphony_update_issue_state({"state_name":"In Progress"})` again unless you are changing to a different state.
    - `Human Review` -> stop and wait for a human to move the issue to `Merging` or `Rework`.
    - `Merging` -> use the repo-local `land` skill if present; otherwise run the equivalent land loop directly.
    - `Rework` -> run rework flow.
@@ -208,6 +208,7 @@ not exist, follow the equivalent procedure directly from this workflow.
     - Persist the workpad comment ID and only write progress updates to that ID.
     - Preserve any content between `<!-- symphony:token-accounting:start -->` and `<!-- symphony:token-accounting:end -->`; Symphony owns that section.
 2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
+    - If the issue is already `In Progress`, repeated `symphony_update_issue_state({"state_name":"In Progress"})` is a no-op and does not count as progress.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.
