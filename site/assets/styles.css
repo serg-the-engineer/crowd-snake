@@ -72,14 +72,16 @@ code {
   gap: 0.75rem;
 }
 
-.nickname-control {
+/* Background color selector styling */
+.bgcolor-control {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   margin: 0;
 }
 
-.nickname-control input {
+/* reuse same input style for select */
+.bgcolor-control select {
   width: 100%;
   border: 1px solid rgba(157, 177, 171, 0.22);
   border-radius: 0.8rem;
