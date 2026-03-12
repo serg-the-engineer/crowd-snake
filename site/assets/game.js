@@ -121,40 +121,41 @@ function loadStoredNickname() {
 function loadStoredBgColor() {
   try {
     const saved = window.localStorage.getItem(BGCOLOR_STORAGE_KEY);
-    return saved || "dark";
-  } catch (e) {
-    return "dark";
+    return saved || "gray-mid";
+  } catch (error) {
+    return "gray-mid";
   }
 }
 
 function saveBgColor(val) {
   try {
     window.localStorage.setItem(BGCOLOR_STORAGE_KEY, val);
-  } catch (e) {}
+  } catch (error) {}
 }
 
 function applyBgColor(val) {
-  const cfg = BG_COLOR_MAP[val] || BG_COLOR_MAP["dark"];
+  const cfg = BG_COLOR_MAP[val] || BG_COLOR_MAP["gray-mid"];
   currentBgColor = cfg.bg;
   currentGridColor = cfg.grid;
 }
 
 function setBgColor(val) {
-  applyBgColor(val);
-  bgColorSelectNode.value = val;
-  saveBgColor(val);
+  const nextBgColor = BG_COLOR_MAP[val] ? val : "gray-mid";
+  applyBgColor(nextBgColor);
+  bgColorSelectNode.value = nextBgColor;
+  saveBgColor(nextBgColor);
 }
 
 const BG_COLOR_MAP = {
-  dark: {bg: "rgba(6, 12, 22, 0.94)", grid: "rgba(153, 255, 153, 0.08)"},
-  black: {bg: "#000000", grid: "rgba(255,255,255,0.1)"},
-  white: {bg: "#ffffff", grid: "rgba(0,0,0,0.1)"},
-  gray1: {bg: "#555555", grid: "rgba(255,255,255,0.08)"},
-  gray2: {bg: "#999999", grid: "rgba(0,0,0,0.08)"}
+  black: { bg: "#050505", grid: "rgba(255, 255, 255, 0.16)" },
+  white: { bg: "#fafafa", grid: "rgba(0, 0, 0, 0.18)" },
+  "gray-light": { bg: "#c8c8c8", grid: "rgba(0, 0, 0, 0.14)" },
+  "gray-mid": { bg: "#7e7e7e", grid: "rgba(255, 255, 255, 0.14)" },
+  "gray-dark": { bg: "#464646", grid: "rgba(255, 255, 255, 0.12)" },
 };
 
-let currentBgColor = BG_COLOR_MAP["dark"].bg;
-let currentGridColor = BG_COLOR_MAP["dark"].grid;
+let currentBgColor = BG_COLOR_MAP["gray-mid"].bg;
+let currentGridColor = BG_COLOR_MAP["gray-mid"].grid;
 
 bgColorSelectNode.addEventListener("change", (e) => {
   setBgColor(e.target.value);
@@ -864,7 +865,6 @@ function drawGameOver() {
 function draw() {
   context.clearRect(0, 0, board.width, board.height);
   context.fillStyle = currentBgColor;
-  context.fillStyle = "rgba(6, 12, 22, 0.94)";
   context.fillRect(0, 0, board.width, board.height);
 
   drawGrid();
