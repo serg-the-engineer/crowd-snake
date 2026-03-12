@@ -35,6 +35,7 @@ hooks:
 agent:
   max_concurrent_agents: 2
   max_turns: 20
+  max_consecutive_no_progress_turns: 5
 execution:
   model_routing:
     default_profile: gpt-5.4
@@ -92,6 +93,7 @@ Work only in the provided repository copy. Do not touch any other path.
 The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, treat that as a blocker: record it in the workpad and stop according to the blocked-access escape hatch.
 - When changing the issue state from inside Symphony, use `symphony_update_issue_state`; do not use raw `linear_graphql` state mutations.
 - When reading the current issue by ticket key (for example `RT-15`), start with `issue(id: $key)`. Do not start with `issues(filter: { identifier: ... })` unless introspection confirmed that filter exists on the current Linear schema.
+- When `linear_graphql` is already injected into the session, call it directly for standard issue/workpad reads. Do not spend turns listing `.codex/skills`, reading `.codex/skills/linear/SKILL.md`, or re-reading workflow files before the first direct `linear_graphql` call.
 
 ## Repository context
 
@@ -149,11 +151,17 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
+- Exploration-only shell commands such as `ls`, `cat`, `sed`, `grep`, `rg`, or `git status` do not count as progress by themselves. After context gathering, take a concrete mutating or validation step in the same turn.
 
 ## Related skills
 
 If repository-local skills exist under `.codex/skills`, prefer them. If they do
 not exist, follow the equivalent procedure directly from this workflow.
+
+Exception: when Symphony already injects `linear_graphql` for the session, do
+not open `.codex/skills/linear/SKILL.md` just to perform the standard issue or
+workpad reads described below. Use the injected tool directly and reserve the
+repo-local `linear` skill for unfamiliar GraphQL shapes.
 
 - `linear`: interact with Linear.
 - `commit`: produce clean, logical commits during implementation.
@@ -180,7 +188,7 @@ not exist, follow the equivalent procedure directly from this workflow.
    - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
    - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
-   - `In Progress` -> continue execution flow from current scratchpad comment.
+   - `In Progress` -> continue execution flow from current scratchpad comment. Do not call `symphony_update_issue_state({"state_name":"In Progress"})` again unless you are changing to a different state.
    - `Human Review` -> stop and wait for a human to move the issue to `Merging` or `Rework`.
    - `Merging` -> use the repo-local `land` skill if present; otherwise run the equivalent land loop directly.
    - `Rework` -> run rework flow.
@@ -190,7 +198,7 @@ not exist, follow the equivalent procedure directly from this workflow.
    - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
 5. For `Todo` tickets, do startup sequencing in this exact order:
    - call `symphony_update_issue_state({"state_name":"In Progress"})`
-   - use the repo-local `linear` skill or `issue(id: $key) { comments { nodes { id body resolvedAt updatedAt } } }` to inspect workpad comments
+   - use `linear_graphql` with `issue(id: $key) { comments { nodes { id body resolvedAt updatedAt } } }` to inspect workpad comments; do not browse `.codex/skills/linear/SKILL.md` first when the injected tool is already available
    - if multiple unresolved `## Codex Workpad` comments exist, keep the most recently updated unresolved one as the single live workpad and retire duplicates after merging any unique notes
    - find/create the live `## Codex Workpad` bootstrap comment
    - only then begin analysis/planning/implementation work.
@@ -208,6 +216,9 @@ not exist, follow the equivalent procedure directly from this workflow.
     - Persist the workpad comment ID and only write progress updates to that ID.
     - Preserve any content between `<!-- symphony:token-accounting:start -->` and `<!-- symphony:token-accounting:end -->`; Symphony owns that section.
 2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
+    - If the issue is already `In Progress`, repeated `symphony_update_issue_state({"state_name":"In Progress"})` is a no-op and does not count as progress.
+    - A successful read-only `linear_graphql` `query` also does not count as progress by itself; after reading context, update the workpad or take another concrete action in the same turn.
+    - Exploration-only shell commands such as `ls`, `cat`, `sed`, `grep`, `rg`, or `git status` also do not count as progress by themselves; avoid rereading `.codex/skills/**`, `AGENTS.md`, or `.symphony/WORKFLOW.md` unless they changed.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.

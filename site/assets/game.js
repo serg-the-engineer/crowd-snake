@@ -17,6 +17,9 @@ const DANGER_FOOD_LIFETIME_MAX_MS = 30_000;
 const SLOW_FOOD_SPAWN_MIN_MS = 1_000;
 const SLOW_FOOD_SPAWN_MAX_MS = 30_000;
 const SLOW_FOOD_LIFETIME_MS = 5_000;
+const POISON_FOOD_SPAWN_MIN_MS = 1_000;
+const POISON_FOOD_SPAWN_MAX_MS = 30_000;
+const POISON_FOOD_LIFETIME_MS = 5_000;
 const PURPLE_FOOD_SPAWN_MIN_MS = 1_000;
 const PURPLE_FOOD_SPAWN_MAX_MS = 30_000;
 const PURPLE_FOOD_LIFETIME_MS = 5_000;
@@ -24,7 +27,9 @@ const PURPLE_FOOD_BLINK_MS = 1_000;
 const BASE_FOOD_VALUE = 1;
 const DANGER_FOOD_VALUE = 3;
 const SLOW_FOOD_VALUE = -1;
+const POISON_FOOD_VALUE = -3;
 const PURPLE_FOOD_VALUE = 2;
+const POISON_TAIL_CELLS = 4;
 const UPDATE_CHECK_MS = 30_000;
 const UNKNOWN_VALUE = "unknown";
 const NA_VALUE = "n/a";
@@ -191,8 +196,10 @@ const state = {
   nextDirection: { x: 1, y: 0 },
   food: { x: 0, y: 0 },
   obstacleCells: [],
+  poisonObstacleCells: [],
   dangerFood: null,
   slowFood: null,
+  poisonFood: null,
   purpleFood: null,
   purpleFoodSpawnedAt: 0,
   score: 0,
@@ -204,6 +211,8 @@ const state = {
   dangerFoodDespawnHandle: null,
   slowFoodSpawnHandle: null,
   slowFoodDespawnHandle: null,
+  poisonFoodSpawnHandle: null,
+  poisonFoodDespawnHandle: null,
   purpleFoodSpawnHandle: null,
   purpleFoodDespawnHandle: null,
   isGameOver: false,
@@ -259,7 +268,10 @@ function obstacleCellsFromOrigin(origin) {
 }
 
 function obstacleContainsCell(candidate) {
-  return state.obstacleCells.some((cell) => sameCell(cell, candidate));
+  return (
+    state.obstacleCells.some((cell) => sameCell(cell, candidate)) ||
+    state.poisonObstacleCells.some((cell) => sameCell(cell, candidate))
+  );
 }
 
 function hasDangerFood() {
@@ -268,6 +280,10 @@ function hasDangerFood() {
 
 function hasSlowFood() {
   return state.slowFood !== null;
+}
+
+function hasPoisonFood() {
+  return state.poisonFood !== null;
 }
 
 function hasPurpleFood() {
@@ -291,6 +307,7 @@ function spawnFood() {
     obstacleContainsCell(candidate) ||
     (hasDangerFood() && sameCell(state.dangerFood, candidate)) ||
     (hasSlowFood() && sameCell(state.slowFood, candidate)) ||
+    (hasPoisonFood() && sameCell(state.poisonFood, candidate)) ||
     (hasPurpleFood() && sameCell(state.purpleFood, candidate))
   ) {
     candidate = randomCell();
@@ -348,6 +365,7 @@ function isObstacleCandidateValid(candidateCells) {
       !sameCell(state.food, cell) &&
       (!hasDangerFood() || !sameCell(state.dangerFood, cell)) &&
       (!hasSlowFood() || !sameCell(state.slowFood, cell)) &&
+      (!hasPoisonFood() || !sameCell(state.poisonFood, cell)) &&
       (!hasPurpleFood() || !sameCell(state.purpleFood, cell))
     );
   });
@@ -428,6 +446,18 @@ function clearSlowFoodTimers() {
   }
 }
 
+function clearPoisonFoodTimers() {
+  if (state.poisonFoodSpawnHandle !== null) {
+    window.clearTimeout(state.poisonFoodSpawnHandle);
+    state.poisonFoodSpawnHandle = null;
+  }
+
+  if (state.poisonFoodDespawnHandle !== null) {
+    window.clearTimeout(state.poisonFoodDespawnHandle);
+    state.poisonFoodDespawnHandle = null;
+  }
+}
+
 function clearPurpleFoodTimers() {
   if (state.purpleFoodSpawnHandle !== null) {
     window.clearTimeout(state.purpleFoodSpawnHandle);
@@ -495,6 +525,10 @@ function spawnDangerFood() {
     }
 
     if (hasSlowFood() && sameCell(state.slowFood, candidate)) {
+      continue;
+    }
+
+    if (hasPoisonFood() && sameCell(state.poisonFood, candidate)) {
       continue;
     }
 
@@ -570,6 +604,10 @@ function spawnSlowFood() {
       continue;
     }
 
+    if (hasPoisonFood() && sameCell(state.poisonFood, candidate)) {
+      continue;
+    }
+
     state.slowFood = candidate;
     draw();
     scheduleSlowFoodDespawn();
@@ -587,6 +625,95 @@ function despawnSlowFood() {
   state.slowFood = null;
   draw();
   scheduleNextSlowFoodSpawn();
+}
+
+function schedulePoisonFoodDespawn() {
+  if (state.isGameOver || !hasPoisonFood()) {
+    return;
+  }
+
+  state.poisonFoodDespawnHandle = window.setTimeout(() => {
+    state.poisonFoodDespawnHandle = null;
+    despawnPoisonFood();
+  }, POISON_FOOD_LIFETIME_MS);
+}
+
+function scheduleNextPoisonFoodSpawn() {
+  if (
+    state.isGameOver ||
+    hasPoisonFood() ||
+    state.poisonFoodSpawnHandle !== null ||
+    state.snake.length <= POISON_TAIL_CELLS
+  ) {
+    return;
+  }
+
+  const delay = randomIntInclusive(
+    POISON_FOOD_SPAWN_MIN_MS,
+    POISON_FOOD_SPAWN_MAX_MS,
+  );
+
+  state.poisonFoodSpawnHandle = window.setTimeout(() => {
+    state.poisonFoodSpawnHandle = null;
+    spawnPoisonFood();
+  }, delay);
+}
+
+function spawnPoisonFood() {
+  if (
+    state.isGameOver ||
+    hasPoisonFood() ||
+    state.snake.length <= POISON_TAIL_CELLS
+  ) {
+    return;
+  }
+
+  const maxAttempts = 200;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = randomCell();
+
+    if (state.snake.some((segment) => sameCell(segment, candidate))) {
+      continue;
+    }
+
+    if (sameCell(state.food, candidate)) {
+      continue;
+    }
+
+    if (obstacleContainsCell(candidate)) {
+      continue;
+    }
+
+    if (hasDangerFood() && sameCell(state.dangerFood, candidate)) {
+      continue;
+    }
+
+    if (hasSlowFood() && sameCell(state.slowFood, candidate)) {
+      continue;
+    }
+
+    if (hasPurpleFood() && sameCell(state.purpleFood, candidate)) {
+      continue;
+    }
+
+    state.poisonFood = candidate;
+    draw();
+    schedulePoisonFoodDespawn();
+    return;
+  }
+
+  scheduleNextPoisonFoodSpawn();
+}
+
+function despawnPoisonFood() {
+  if (state.isGameOver || !hasPoisonFood()) {
+    return;
+  }
+
+  state.poisonFood = null;
+  draw();
+  scheduleNextPoisonFoodSpawn();
 }
 
 function schedulePurpleFoodDespawn() {
@@ -643,6 +770,10 @@ function spawnPurpleFood() {
     }
 
     if (hasSlowFood() && sameCell(state.slowFood, candidate)) {
+      continue;
+    }
+
+    if (hasPoisonFood() && sameCell(state.poisonFood, candidate)) {
       continue;
     }
 
@@ -738,11 +869,15 @@ function draw() {
 
   drawGrid();
   state.obstacleCells.forEach((cell) => drawCell(cell, "#868d94"));
+  state.poisonObstacleCells.forEach((cell) => drawCell(cell, "#4d5359"));
   if (hasDangerFood()) {
     drawLabeledCell(state.dangerFood, "#ff4f4f", String(DANGER_FOOD_VALUE), "#fff5f5");
   }
   if (hasSlowFood()) {
     drawLabeledCell(state.slowFood, "#4f93ff", String(SLOW_FOOD_VALUE), "#f7fbff");
+  }
+  if (hasPoisonFood()) {
+    drawLabeledCell(state.poisonFood, "#4d5359", String(POISON_FOOD_VALUE), "#f3f5f7");
   }
   if (hasPurpleFood() && isPurpleFoodVisible()) {
     drawLabeledCell(
@@ -781,6 +916,7 @@ function stopLoop() {
   clearObstacleTimers();
   clearDangerFoodTimers();
   clearSlowFoodTimers();
+  clearPoisonFoodTimers();
   clearPurpleFoodTimers();
 }
 
@@ -802,6 +938,15 @@ function endGame() {
   void syncRemoteBestScore();
 }
 
+function detachPoisonTail() {
+  if (state.snake.length <= POISON_TAIL_CELLS) {
+    return;
+  }
+
+  const detachedCells = state.snake.splice(-POISON_TAIL_CELLS, POISON_TAIL_CELLS);
+  state.poisonObstacleCells.push(...detachedCells);
+}
+
 function step() {
   const now = Date.now();
   state.direction = { ...state.nextDirection };
@@ -814,10 +959,12 @@ function step() {
   const ateFood = sameCell(nextHead, state.food);
   const ateDangerFood = hasDangerFood() && sameCell(nextHead, state.dangerFood);
   const ateSlowFood = hasSlowFood() && sameCell(nextHead, state.slowFood);
+  const atePoisonFood = hasPoisonFood() && sameCell(nextHead, state.poisonFood);
   const touchedPurpleFood = hasPurpleFood() && sameCell(nextHead, state.purpleFood);
   const atePurpleFood = touchedPurpleFood && isPurpleFoodVisible(now);
   const hidPurpleFood = touchedPurpleFood && !atePurpleFood;
-  const willGrow = ateFood || ateDangerFood || ateSlowFood || atePurpleFood;
+  const willGrow =
+    ateFood || ateDangerFood || ateSlowFood || atePoisonFood || atePurpleFood;
   const occupiedCells = willGrow ? state.snake : state.snake.slice(0, -1);
 
   const crashed =
@@ -850,6 +997,10 @@ function step() {
       scoreDelta += SLOW_FOOD_VALUE;
     }
 
+    if (atePoisonFood) {
+      scoreDelta += POISON_FOOD_VALUE;
+    }
+
     if (atePurpleFood) {
       scoreDelta += PURPLE_FOOD_VALUE;
     }
@@ -875,6 +1026,13 @@ function step() {
       applySlowFoodSpeedReduction();
     }
 
+    if (atePoisonFood) {
+      state.poisonFood = null;
+      clearPoisonFoodTimers();
+      detachPoisonTail();
+      scheduleNextPoisonFoodSpawn();
+    }
+
     if (atePurpleFood) {
       state.purpleFood = null;
       state.purpleFoodSpawnedAt = 0;
@@ -892,6 +1050,7 @@ function step() {
     scheduleNextPurpleFoodSpawn();
   }
 
+  scheduleNextPoisonFoodSpawn();
   draw();
 }
 
@@ -909,9 +1068,11 @@ function startGame() {
   state.nextDirection = { x: 1, y: 0 };
   state.score = 0;
   state.obstacleCells = [];
+  state.poisonObstacleCells = [];
   state.loopMs = LOOP_MS;
   state.dangerFood = null;
   state.slowFood = null;
+  state.poisonFood = null;
   state.purpleFood = null;
   state.purpleFoodSpawnedAt = 0;
   state.isGameOver = false;
@@ -919,6 +1080,7 @@ function startGame() {
   spawnFood();
   scheduleNextDangerFoodSpawn();
   scheduleNextSlowFoodSpawn();
+  scheduleNextPoisonFoodSpawn();
   scheduleNextPurpleFoodSpawn();
   updateHud("Running");
   draw();
