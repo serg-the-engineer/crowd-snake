@@ -37,6 +37,7 @@ const BUILD_NOTICE_FALLBACK = "refresh to load latest changes";
 const DEFAULT_NICKNAME = "anonymous";
 const MAX_NICKNAME_LENGTH = 24;
 const NICKNAME_STORAGE_KEY = "crowd-snake:nickname";
+const BGCOLOR_STORAGE_KEY = "crowd-snake:bgcolor";
 const CHALLENGE_SOLVE_MAX_ATTEMPTS = 2_000_000;
 
 const board = document.getElementById("game-board");
@@ -47,6 +48,7 @@ const currentVersionNode = document.getElementById("current-version");
 const serverBestNode = document.getElementById("server-best");
 const serverBestNicknameNode = document.getElementById("server-best-nickname");
 const nicknameInputNode = document.getElementById("nickname-input");
+const bgColorSelectNode = document.getElementById("bgcolor-select");
 const updateBannerNode = document.getElementById("update-banner");
 const updateVersionNode = document.getElementById("update-version");
 const restartButton = document.getElementById("restart-button");
@@ -115,6 +117,52 @@ function loadStoredNickname() {
     return DEFAULT_NICKNAME;
   }
 }
+
+function loadStoredBgColor() {
+  try {
+    const saved = window.localStorage.getItem(BGCOLOR_STORAGE_KEY);
+    return saved || "gray-mid";
+  } catch (error) {
+    return "gray-mid";
+  }
+}
+
+function saveBgColor(val) {
+  try {
+    window.localStorage.setItem(BGCOLOR_STORAGE_KEY, val);
+  } catch (error) {}
+}
+
+function applyBgColor(val) {
+  const cfg = BG_COLOR_MAP[val] || BG_COLOR_MAP["gray-mid"];
+  currentBgColor = cfg.bg;
+  currentGridColor = cfg.grid;
+}
+
+function setBgColor(val) {
+  const nextBgColor = BG_COLOR_MAP[val] ? val : "gray-mid";
+  applyBgColor(nextBgColor);
+  bgColorSelectNode.value = nextBgColor;
+  saveBgColor(nextBgColor);
+}
+
+const BG_COLOR_MAP = {
+  black: { bg: "#050505", grid: "rgba(255, 255, 255, 0.16)" },
+  white: { bg: "#fafafa", grid: "rgba(0, 0, 0, 0.18)" },
+  "gray-light": { bg: "#c8c8c8", grid: "rgba(0, 0, 0, 0.14)" },
+  "gray-mid": { bg: "#7e7e7e", grid: "rgba(255, 255, 255, 0.14)" },
+  "gray-dark": { bg: "#464646", grid: "rgba(255, 255, 255, 0.12)" },
+};
+
+let currentBgColor = BG_COLOR_MAP["gray-mid"].bg;
+let currentGridColor = BG_COLOR_MAP["gray-mid"].grid;
+
+bgColorSelectNode.addEventListener("change", (e) => {
+  setBgColor(e.target.value);
+});
+
+const storedBg = loadStoredBgColor();
+setBgColor(storedBg);
 
 function saveNickname(nickname) {
   try {
@@ -752,7 +800,7 @@ function despawnPurpleFood() {
 }
 
 function drawGrid() {
-  context.strokeStyle = "rgba(153, 255, 153, 0.08)";
+  context.strokeStyle = currentGridColor;
   context.lineWidth = 1;
 
   for (let i = 1; i < GRID_SIZE; i += 1) {
@@ -816,8 +864,7 @@ function drawGameOver() {
 
 function draw() {
   context.clearRect(0, 0, board.width, board.height);
-
-  context.fillStyle = "rgba(6, 12, 22, 0.94)";
+  context.fillStyle = currentBgColor;
   context.fillRect(0, 0, board.width, board.height);
 
   drawGrid();
@@ -1220,9 +1267,9 @@ document.addEventListener("keydown", (event) => {
 
 restartButton.addEventListener("click", startGame);
 refreshButton.addEventListener("click", () => window.location.reload());
-nicknameInputNode.addEventListener("change", (event) => {
-  setNickname(event.target.value);
-});
+ nicknameInputNode.addEventListener("change", (event) => {
+   setNickname(event.target.value);
+ });
 nicknameInputNode.addEventListener("blur", (event) => {
   setNickname(event.target.value);
 });
@@ -1235,6 +1282,43 @@ nicknameInputNode.addEventListener("keydown", (event) => {
 
 setNickname(state.nickname);
 startGame();
+// Apply stored background theme or default
+function applyStoredBg() {
+  const stored = window.localStorage.getItem(BGCOLOR_STORAGE_KEY) || "dark";
+  const themeMap = {
+    dark: { top: "#08111f", bottom: "#132b27" },
+    white: { top: "#ffffff", bottom: "#e0e0e0" },
+    black: { top: "#000000", bottom: "#111111" },
+    gray1: { top: "#222222", bottom: "#333333" },
+    gray2: { top: "#444444", bottom: "#555555" },
+  };
+  const theme = themeMap[stored] || themeMap.dark;
+  document.documentElement.style.setProperty("--bg-top", theme.top);
+  document.documentElement.style.setProperty("--bg-bottom", theme.bottom);
+  // sync select UI
+  if (bgColorSelectNode) {
+    bgColorSelectNode.value = stored;
+  }
+}
+applyStoredBg();
+
+// Listener for background selection changes
+if (bgColorSelectNode) {
+  bgColorSelectNode.addEventListener("change", (e) => {
+    const key = e.target.value;
+    const themeMap = {
+      dark: { top: "#08111f", bottom: "#132b27" },
+      white: { top: "#ffffff", bottom: "#e0e0e0" },
+      black: { top: "#000000", bottom: "#111111" },
+      gray1: { top: "#222222", bottom: "#333333" },
+      gray2: { top: "#444444", bottom: "#555555" },
+    };
+    const theme = themeMap[key] || themeMap.dark;
+    document.documentElement.style.setProperty("--bg-top", theme.top);
+    document.documentElement.style.setProperty("--bg-bottom", theme.bottom);
+    window.localStorage.setItem(BGCOLOR_STORAGE_KEY, key);
+  });
+}
 void loadRemoteState();
 window.setTimeout(checkForUpdate, 5_000);
 window.setInterval(checkForUpdate, UPDATE_CHECK_MS);

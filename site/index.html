@@ -7,7 +7,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
-  <body data-app-version="0.2.4" data-app-commit-sha="local-dev">
+  <body data-app-version="0.2.6" data-app-commit-sha="local-dev">
     <main class="shell">
       <section class="status-panel">
         <div class="notice" id="update-banner" hidden>
@@ -29,6 +29,18 @@
           />
         </label>
 
+        <!-- Background color selector -->
+        <label class="bgcolor-control" for="bgcolor-select">
+          <span class="label">Background</span>
+          <select id="bgcolor-select" name="bgcolor">
+            <option value="black">Black</option>
+            <option value="white">White</option>
+            <option value="gray-light">Light gray</option>
+            <option value="gray-mid" selected>Mid gray</option>
+            <option value="gray-dark">Dark gray</option>
+          </select>
+        </label>
+
         <div class="hud">
           <div>
             <span class="label">Score</span>
@@ -40,7 +52,7 @@
           </div>
           <div>
             <span class="label">Version</span>
-            <span class="value" id="current-version">0.2.4</span>
+            <span class="value" id="current-version">0.2.6</span>
           </div>
           <div>
             <span class="label">Server Best</span>
