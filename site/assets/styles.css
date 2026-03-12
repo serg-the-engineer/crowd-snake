@@ -154,7 +154,7 @@ code {
   width: min(100%, 32rem, calc(100vh - 13.5rem));
   max-width: 100%;
   max-height: calc(100vh - 13.5rem);
-  aspect-ratio: 1;
+  height: auto;
   display: block;
   margin: 0 auto;
   border-radius: 1.25rem;

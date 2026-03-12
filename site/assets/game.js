@@ -1,4 +1,5 @@
-const GRID_SIZE = 18;
+const INITIAL_BOARD_WIDTH = 18;
+const INITIAL_BOARD_HEIGHT = 18;
 const CELL_SIZE = 20;
 const LOOP_MS = 140;
 const OBSTACLE_SIZE = 2;
@@ -14,6 +15,12 @@ const DANGER_FOOD_SPAWN_MIN_MS = 1_000;
 const DANGER_FOOD_SPAWN_MAX_MS = 30_000;
 const DANGER_FOOD_LIFETIME_MIN_MS = 5_000;
 const DANGER_FOOD_LIFETIME_MAX_MS = 30_000;
+const HUMMERHEAD_FOOD_LIFETIME_MIN_MS = 1_000;
+const HUMMERHEAD_FOOD_LIFETIME_MAX_MS = 8_000;
+const HUMMERHEAD_SPEED_FACTOR = 0.45;
+const HUMMERHEAD_HEAD_SCALE = 1.15;
+const WALL_EXPANSION_PAUSE_MS = 1_000;
+const WALL_EXPANSION_ANIMATION_MS = 260;
 const SLOW_FOOD_SPAWN_MIN_MS = 1_000;
 const SLOW_FOOD_SPAWN_MAX_MS = 30_000;
 const SLOW_FOOD_LIFETIME_MS = 5_000;
@@ -26,6 +33,7 @@ const PURPLE_FOOD_LIFETIME_MS = 5_000;
 const PURPLE_FOOD_BLINK_MS = 1_000;
 const BASE_FOOD_VALUE = 1;
 const DANGER_FOOD_VALUE = 3;
+const HUMMERHEAD_FOOD_LABEL = ">>";
 const SLOW_FOOD_VALUE = -1;
 const POISON_FOOD_VALUE = -3;
 const PURPLE_FOOD_VALUE = 2;
@@ -195,14 +203,25 @@ const state = {
   snake: [],
   direction: { x: 1, y: 0 },
   nextDirection: { x: 1, y: 0 },
+  boardMinX: 0,
+  boardMaxX: INITIAL_BOARD_WIDTH - 1,
+  boardMinY: 0,
+  boardMaxY: INITIAL_BOARD_HEIGHT - 1,
   food: { x: 0, y: 0 },
   obstacleCells: [],
   poisonObstacleCells: [],
   dangerFood: null,
+  hummerFood: null,
   slowFood: null,
   poisonFood: null,
   purpleFood: null,
   purpleFoodSpawnedAt: 0,
+  hummerEffectActive: false,
+  hummerEffectBaseLoopMs: LOOP_MS,
+  isExpansionPaused: false,
+  expansionPauseHandle: null,
+  expansionAnimation: null,
+  expansionAnimationFrameHandle: null,
   score: 0,
   loopMs: LOOP_MS,
   tickHandle: null,
@@ -247,8 +266,8 @@ function updateHud(statusText) {
 
 function randomCell() {
   return {
-    x: Math.floor(Math.random() * GRID_SIZE),
-    y: Math.floor(Math.random() * GRID_SIZE),
+    x: randomIntInclusive(state.boardMinX, state.boardMaxX),
+    y: randomIntInclusive(state.boardMinY, state.boardMaxY),
   };
 }
 
@@ -275,8 +294,33 @@ function obstacleContainsCell(candidate) {
   );
 }
 
+function boardWidth() {
+  return state.boardMaxX - state.boardMinX + 1;
+}
+
+function boardHeight() {
+  return state.boardMaxY - state.boardMinY + 1;
+}
+
+function canvasX(cell) {
+  return (cell.x - state.boardMinX) * CELL_SIZE;
+}
+
+function canvasY(cell) {
+  return (cell.y - state.boardMinY) * CELL_SIZE;
+}
+
+function resizeBoardCanvas() {
+  board.width = boardWidth() * CELL_SIZE;
+  board.height = boardHeight() * CELL_SIZE;
+}
+
 function hasDangerFood() {
   return state.dangerFood !== null;
+}
+
+function hasHummerFood() {
+  return state.hummerFood !== null;
 }
 
 function hasSlowFood() {
@@ -307,6 +351,7 @@ function spawnFood() {
     state.snake.some((segment) => sameCell(segment, candidate)) ||
     obstacleContainsCell(candidate) ||
     (hasDangerFood() && sameCell(state.dangerFood, candidate)) ||
+    (hasHummerFood() && sameCell(state.hummerFood, candidate)) ||
     (hasSlowFood() && sameCell(state.slowFood, candidate)) ||
     (hasPoisonFood() && sameCell(state.poisonFood, candidate)) ||
     (hasPurpleFood() && sameCell(state.purpleFood, candidate))
@@ -357,14 +402,15 @@ function isObstacleCandidateValid(candidateCells) {
       Math.abs(cell.x - head.x) + Math.abs(cell.y - head.y);
 
     return (
-      cell.x >= 0 &&
-      cell.x < GRID_SIZE &&
-      cell.y >= 0 &&
-      cell.y < GRID_SIZE &&
+      cell.x >= state.boardMinX &&
+      cell.x <= state.boardMaxX &&
+      cell.y >= state.boardMinY &&
+      cell.y <= state.boardMaxY &&
       distanceFromHead >= OBSTACLE_MIN_HEAD_DISTANCE &&
       !state.snake.some((segment) => sameCell(segment, cell)) &&
       !sameCell(state.food, cell) &&
       (!hasDangerFood() || !sameCell(state.dangerFood, cell)) &&
+      (!hasHummerFood() || !sameCell(state.hummerFood, cell)) &&
       (!hasSlowFood() || !sameCell(state.slowFood, cell)) &&
       (!hasPoisonFood() || !sameCell(state.poisonFood, cell)) &&
       (!hasPurpleFood() || !sameCell(state.purpleFood, cell))
@@ -389,13 +435,14 @@ function spawnObstacle() {
     return;
   }
 
-  const maxOrigin = GRID_SIZE - OBSTACLE_SIZE;
+  const maxOriginX = state.boardMaxX - (OBSTACLE_SIZE - 1);
+  const maxOriginY = state.boardMaxY - (OBSTACLE_SIZE - 1);
   const maxAttempts = 200;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const origin = {
-      x: randomIntInclusive(0, maxOrigin),
-      y: randomIntInclusive(0, maxOrigin),
+      x: randomIntInclusive(state.boardMinX, maxOriginX),
+      y: randomIntInclusive(state.boardMinY, maxOriginY),
     };
     const candidateCells = obstacleCellsFromOrigin(origin);
 
@@ -435,6 +482,27 @@ function clearDangerFoodTimers() {
   }
 }
 
+function clearExpansionPause() {
+  if (state.expansionPauseHandle !== null) {
+    window.clearTimeout(state.expansionPauseHandle);
+    state.expansionPauseHandle = null;
+  }
+}
+
+function clearExpansionAnimationFrame() {
+  if (state.expansionAnimationFrameHandle === null) {
+    return;
+  }
+
+  if (typeof window.cancelAnimationFrame === "function") {
+    window.cancelAnimationFrame(state.expansionAnimationFrameHandle);
+  } else {
+    window.clearTimeout(state.expansionAnimationFrameHandle);
+  }
+
+  state.expansionAnimationFrameHandle = null;
+}
+
 function clearSlowFoodTimers() {
   if (state.slowFoodSpawnHandle !== null) {
     window.clearTimeout(state.slowFoodSpawnHandle);
@@ -472,23 +540,33 @@ function clearPurpleFoodTimers() {
 }
 
 function scheduleDangerFoodDespawn() {
-  if (state.isGameOver || !hasDangerFood()) {
+  if (state.isGameOver || (!hasDangerFood() && !hasHummerFood())) {
     return;
   }
 
-  const delay = randomIntInclusive(
-    DANGER_FOOD_LIFETIME_MIN_MS,
-    DANGER_FOOD_LIFETIME_MAX_MS,
-  );
+  const delay = hasHummerFood()
+    ? randomIntInclusive(
+        HUMMERHEAD_FOOD_LIFETIME_MIN_MS,
+        HUMMERHEAD_FOOD_LIFETIME_MAX_MS,
+      )
+    : randomIntInclusive(
+        DANGER_FOOD_LIFETIME_MIN_MS,
+        DANGER_FOOD_LIFETIME_MAX_MS,
+      );
 
   state.dangerFoodDespawnHandle = window.setTimeout(() => {
     state.dangerFoodDespawnHandle = null;
+    if (hasHummerFood()) {
+      despawnHummerFood();
+      return;
+    }
+
     despawnDangerFood();
   }, delay);
 }
 
 function scheduleNextDangerFoodSpawn() {
-  if (state.isGameOver || hasDangerFood()) {
+  if (state.isGameOver || hasDangerFood() || hasHummerFood()) {
     return;
   }
 
@@ -499,12 +577,17 @@ function scheduleNextDangerFoodSpawn() {
 
   state.dangerFoodSpawnHandle = window.setTimeout(() => {
     state.dangerFoodSpawnHandle = null;
-    spawnDangerFood();
+    if (Math.random() < 0.5) {
+      spawnDangerFood();
+      return;
+    }
+
+    spawnHummerFood();
   }, delay);
 }
 
 function spawnDangerFood() {
-  if (state.isGameOver || hasDangerFood()) {
+  if (state.isGameOver || hasDangerFood() || hasHummerFood()) {
     return;
   }
 
@@ -533,6 +616,10 @@ function spawnDangerFood() {
       continue;
     }
 
+    if (hasPurpleFood() && sameCell(state.purpleFood, candidate)) {
+      continue;
+    }
+
     state.dangerFood = candidate;
     draw();
     scheduleDangerFoodDespawn();
@@ -548,6 +635,59 @@ function despawnDangerFood() {
   }
 
   state.dangerFood = null;
+  draw();
+  scheduleNextDangerFoodSpawn();
+}
+
+function spawnHummerFood() {
+  if (state.isGameOver || hasDangerFood() || hasHummerFood()) {
+    return;
+  }
+
+  const maxAttempts = 200;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = randomCell();
+
+    if (state.snake.some((segment) => sameCell(segment, candidate))) {
+      continue;
+    }
+
+    if (sameCell(state.food, candidate)) {
+      continue;
+    }
+
+    if (obstacleContainsCell(candidate)) {
+      continue;
+    }
+
+    if (hasSlowFood() && sameCell(state.slowFood, candidate)) {
+      continue;
+    }
+
+    if (hasPoisonFood() && sameCell(state.poisonFood, candidate)) {
+      continue;
+    }
+
+    if (hasPurpleFood() && sameCell(state.purpleFood, candidate)) {
+      continue;
+    }
+
+    state.hummerFood = candidate;
+    draw();
+    scheduleDangerFoodDespawn();
+    return;
+  }
+
+  scheduleNextDangerFoodSpawn();
+}
+
+function despawnHummerFood() {
+  if (state.isGameOver || !hasHummerFood()) {
+    return;
+  }
+
+  state.hummerFood = null;
   draw();
   scheduleNextDangerFoodSpawn();
 }
@@ -602,6 +742,10 @@ function spawnSlowFood() {
     }
 
     if (hasDangerFood() && sameCell(state.dangerFood, candidate)) {
+      continue;
+    }
+
+    if (hasHummerFood() && sameCell(state.hummerFood, candidate)) {
       continue;
     }
 
@@ -690,6 +834,10 @@ function spawnPoisonFood() {
       continue;
     }
 
+    if (hasHummerFood() && sameCell(state.hummerFood, candidate)) {
+      continue;
+    }
+
     if (hasSlowFood() && sameCell(state.slowFood, candidate)) {
       continue;
     }
@@ -770,6 +918,10 @@ function spawnPurpleFood() {
       continue;
     }
 
+    if (hasHummerFood() && sameCell(state.hummerFood, candidate)) {
+      continue;
+    }
+
     if (hasSlowFood() && sameCell(state.slowFood, candidate)) {
       continue;
     }
@@ -803,14 +955,17 @@ function drawGrid() {
   context.strokeStyle = currentGridColor;
   context.lineWidth = 1;
 
-  for (let i = 1; i < GRID_SIZE; i += 1) {
+  for (let i = 1; i < boardWidth(); i += 1) {
     const lineOffset = i * CELL_SIZE;
 
     context.beginPath();
     context.moveTo(lineOffset, 0);
     context.lineTo(lineOffset, board.height);
     context.stroke();
+  }
 
+  for (let i = 1; i < boardHeight(); i += 1) {
+    const lineOffset = i * CELL_SIZE;
     context.beginPath();
     context.moveTo(0, lineOffset);
     context.lineTo(board.width, lineOffset);
@@ -818,17 +973,20 @@ function drawGrid() {
   }
 }
 
-function drawCell(cell, fillStyle) {
-  const x = cell.x * CELL_SIZE;
-  const y = cell.y * CELL_SIZE;
+function drawCell(cell, fillStyle, scale = 1) {
+  const x = canvasX(cell);
+  const y = canvasY(cell);
   const inset = 2;
+  const size = CELL_SIZE - inset * 2;
+  const scaledSize = size * scale;
+  const offset = (size - scaledSize) / 2;
 
   context.fillStyle = fillStyle;
   context.fillRect(
-    x + inset,
-    y + inset,
-    CELL_SIZE - inset * 2,
-    CELL_SIZE - inset * 2,
+    x + inset + offset,
+    y + inset + offset,
+    scaledSize,
+    scaledSize,
   );
 }
 
@@ -842,8 +1000,8 @@ function drawLabeledCell(cell, fillStyle, label, textColor = "#061022") {
   context.textBaseline = "middle";
   context.fillText(
     label,
-    cell.x * CELL_SIZE + CELL_SIZE / 2,
-    cell.y * CELL_SIZE + CELL_SIZE / 2 + 0.5,
+    canvasX(cell) + CELL_SIZE / 2,
+    canvasY(cell) + CELL_SIZE / 2 + 0.5,
   );
   context.restore();
 }
@@ -873,6 +1031,9 @@ function draw() {
   if (hasDangerFood()) {
     drawLabeledCell(state.dangerFood, "#ff4f4f", String(DANGER_FOOD_VALUE), "#fff5f5");
   }
+  if (hasHummerFood()) {
+    drawLabeledCell(state.hummerFood, "#7a2136", HUMMERHEAD_FOOD_LABEL, "#ffeef3");
+  }
   if (hasSlowFood()) {
     drawLabeledCell(state.slowFood, "#4f93ff", String(SLOW_FOOD_VALUE), "#f7fbff");
   }
@@ -890,9 +1051,31 @@ function draw() {
   drawLabeledCell(state.food, "#ffd36a", String(BASE_FOOD_VALUE));
 
   state.snake.forEach((segment, index) => {
-    const color = index === 0 ? "#c7ff7b" : "#6df04e";
-    drawCell(segment, color);
+    const isBoostedHead = index === 0 && state.hummerEffectActive;
+    const color = isBoostedHead ? "#ff4f4f" : index === 0 ? "#c7ff7b" : "#6df04e";
+    const scale = isBoostedHead ? HUMMERHEAD_HEAD_SCALE : 1;
+    drawCell(segment, color, scale);
   });
+
+  if (state.expansionAnimation !== null) {
+    const elapsed = Date.now() - state.expansionAnimation.startedAt;
+    const progress = Math.min(1, elapsed / WALL_EXPANSION_ANIMATION_MS);
+    const alpha = 0.35 * (1 - progress);
+    context.save();
+    context.fillStyle = `rgba(255, 109, 109, ${alpha})`;
+
+    if (state.expansionAnimation.direction === "left") {
+      context.fillRect(0, 0, CELL_SIZE, board.height);
+    } else if (state.expansionAnimation.direction === "right") {
+      context.fillRect(board.width - CELL_SIZE, 0, CELL_SIZE, board.height);
+    } else if (state.expansionAnimation.direction === "up") {
+      context.fillRect(0, 0, board.width, CELL_SIZE);
+    } else {
+      context.fillRect(0, board.height - CELL_SIZE, board.width, CELL_SIZE);
+    }
+
+    context.restore();
+  }
 
   if (state.isGameOver) {
     drawGameOver();
@@ -918,6 +1101,8 @@ function stopLoop() {
   clearSlowFoodTimers();
   clearPoisonFoodTimers();
   clearPurpleFoodTimers();
+  clearExpansionPause();
+  clearExpansionAnimationFrame();
 }
 
 function applyDangerFoodSpeedBoost() {
@@ -928,6 +1113,83 @@ function applyDangerFoodSpeedBoost() {
 function applySlowFoodSpeedReduction() {
   state.loopMs = Math.round(state.loopMs * SPEED_SLOWDOWN_FACTOR);
   startMovementLoop();
+}
+
+function activateHummerEffect() {
+  state.hummerEffectActive = true;
+  state.hummerEffectBaseLoopMs = state.loopMs;
+  state.loopMs = Math.max(MIN_LOOP_MS, Math.round(state.loopMs * HUMMERHEAD_SPEED_FACTOR));
+  startMovementLoop();
+}
+
+function consumeHummerEffect() {
+  if (!state.hummerEffectActive) {
+    return;
+  }
+
+  state.hummerEffectActive = false;
+  state.loopMs = state.hummerEffectBaseLoopMs;
+
+  if (!state.isExpansionPaused) {
+    startMovementLoop();
+  }
+}
+
+function expandBoard(direction) {
+  if (direction === "left") {
+    state.boardMinX -= 1;
+  } else if (direction === "right") {
+    state.boardMaxX += 1;
+  } else if (direction === "up") {
+    state.boardMinY -= 1;
+  } else if (direction === "down") {
+    state.boardMaxY += 1;
+  }
+
+  resizeBoardCanvas();
+  state.expansionAnimation = { direction, startedAt: Date.now() };
+}
+
+function pauseAfterBoardExpansion() {
+  state.isExpansionPaused = true;
+  stopMovementLoop();
+  updateHud("Wall breached");
+  clearExpansionAnimationFrame();
+
+  const animate = () => {
+    if (state.expansionAnimation === null) {
+      state.expansionAnimationFrameHandle = null;
+      return;
+    }
+
+    draw();
+    const elapsed = Date.now() - state.expansionAnimation.startedAt;
+
+    if (elapsed >= WALL_EXPANSION_ANIMATION_MS) {
+      state.expansionAnimationFrameHandle = null;
+      return;
+    }
+
+    if (typeof window.requestAnimationFrame === "function") {
+      state.expansionAnimationFrameHandle = window.requestAnimationFrame(animate);
+      return;
+    }
+
+    state.expansionAnimationFrameHandle = window.setTimeout(animate, 16);
+  };
+
+  animate();
+  draw();
+  clearExpansionPause();
+  state.expansionPauseHandle = window.setTimeout(() => {
+    state.expansionPauseHandle = null;
+    state.isExpansionPaused = false;
+    state.expansionAnimation = null;
+    clearExpansionAnimationFrame();
+    updateHud("Running");
+    draw();
+    startMovementLoop();
+  }, WALL_EXPANSION_PAUSE_MS);
 }
 
 function endGame() {
@@ -947,6 +1209,32 @@ function detachPoisonTail() {
   state.poisonObstacleCells.push(...detachedCells);
 }
 
+function removePoisonObstacleCell(target) {
+  state.poisonObstacleCells = state.poisonObstacleCells.filter(
+    (cell) => !sameCell(cell, target),
+  );
+}
+
+function directionToWall(nextHead) {
+  if (nextHead.x < state.boardMinX) {
+    return "left";
+  }
+
+  if (nextHead.x > state.boardMaxX) {
+    return "right";
+  }
+
+  if (nextHead.y < state.boardMinY) {
+    return "up";
+  }
+
+  if (nextHead.y > state.boardMaxY) {
+    return "down";
+  }
+
+  return null;
+}
+
 function step() {
   const now = Date.now();
   state.direction = { ...state.nextDirection };
@@ -958,25 +1246,55 @@ function step() {
   };
   const ateFood = sameCell(nextHead, state.food);
   const ateDangerFood = hasDangerFood() && sameCell(nextHead, state.dangerFood);
+  const ateHummerFood = hasHummerFood() && sameCell(nextHead, state.hummerFood);
   const ateSlowFood = hasSlowFood() && sameCell(nextHead, state.slowFood);
   const atePoisonFood = hasPoisonFood() && sameCell(nextHead, state.poisonFood);
   const touchedPurpleFood = hasPurpleFood() && sameCell(nextHead, state.purpleFood);
   const atePurpleFood = touchedPurpleFood && isPurpleFoodVisible(now);
   const hidPurpleFood = touchedPurpleFood && !atePurpleFood;
   const willGrow =
-    ateFood || ateDangerFood || ateSlowFood || atePoisonFood || atePurpleFood;
+    ateFood ||
+    ateDangerFood ||
+    ateHummerFood ||
+    ateSlowFood ||
+    atePoisonFood ||
+    atePurpleFood;
   const occupiedCells = willGrow ? state.snake : state.snake.slice(0, -1);
+  const hitWallDirection = directionToWall(nextHead);
+  const hitSelf = occupiedCells.some((segment) => sameCell(segment, nextHead));
+  const hitObstacle = obstacleContainsCell(nextHead);
 
-  const crashed =
-    nextHead.x < 0 ||
-    nextHead.x >= GRID_SIZE ||
-    nextHead.y < 0 ||
-    nextHead.y >= GRID_SIZE ||
-    occupiedCells.some((segment) => sameCell(segment, nextHead)) ||
-    obstacleContainsCell(nextHead);
-
-  if (crashed) {
+  if (hitSelf) {
     endGame();
+    return;
+  }
+
+  if (hitObstacle) {
+    if (!state.hummerEffectActive) {
+      endGame();
+      return;
+    }
+
+    if (state.obstacleCells.some((cell) => sameCell(cell, nextHead))) {
+      state.obstacleCells = [];
+      clearObstacleTimers();
+      scheduleNextObstacleSpawn();
+    } else {
+      removePoisonObstacleCell(nextHead);
+    }
+
+    consumeHummerEffect();
+  }
+
+  if (hitWallDirection !== null) {
+    if (!state.hummerEffectActive) {
+      endGame();
+      return;
+    }
+
+    consumeHummerEffect();
+    expandBoard(hitWallDirection);
+    pauseAfterBoardExpansion();
     return;
   }
 
@@ -990,6 +1308,10 @@ function step() {
     }
 
     if (ateDangerFood) {
+      scoreDelta += DANGER_FOOD_VALUE;
+    }
+
+    if (ateHummerFood) {
       scoreDelta += DANGER_FOOD_VALUE;
     }
 
@@ -1017,6 +1339,13 @@ function step() {
       clearDangerFoodTimers();
       scheduleNextDangerFoodSpawn();
       applyDangerFoodSpeedBoost();
+    }
+
+    if (ateHummerFood) {
+      state.hummerFood = null;
+      clearDangerFoodTimers();
+      scheduleNextDangerFoodSpawn();
+      activateHummerEffect();
     }
 
     if (ateSlowFood) {
@@ -1057,12 +1386,19 @@ function step() {
 function startGame() {
   stopLoop();
 
-  const center = Math.floor(GRID_SIZE / 2);
+  state.boardMinX = 0;
+  state.boardMaxX = INITIAL_BOARD_WIDTH - 1;
+  state.boardMinY = 0;
+  state.boardMaxY = INITIAL_BOARD_HEIGHT - 1;
+  resizeBoardCanvas();
+
+  const centerX = Math.floor((state.boardMinX + state.boardMaxX) / 2);
+  const centerY = Math.floor((state.boardMinY + state.boardMaxY) / 2);
 
   state.snake = [
-    { x: center, y: center },
-    { x: center - 1, y: center },
-    { x: center - 2, y: center },
+    { x: centerX, y: centerY },
+    { x: centerX - 1, y: centerY },
+    { x: centerX - 2, y: centerY },
   ];
   state.direction = { x: 1, y: 0 };
   state.nextDirection = { x: 1, y: 0 };
@@ -1071,10 +1407,16 @@ function startGame() {
   state.poisonObstacleCells = [];
   state.loopMs = LOOP_MS;
   state.dangerFood = null;
+  state.hummerFood = null;
   state.slowFood = null;
   state.poisonFood = null;
   state.purpleFood = null;
   state.purpleFoodSpawnedAt = 0;
+  state.hummerEffectActive = false;
+  state.hummerEffectBaseLoopMs = LOOP_MS;
+  state.isExpansionPaused = false;
+  state.expansionAnimation = null;
+  state.expansionAnimationFrameHandle = null;
   state.isGameOver = false;
 
   spawnFood();
@@ -1090,6 +1432,10 @@ function startGame() {
 }
 
 function queueDirection(nextDirection) {
+  if (state.hummerEffectActive && !state.isExpansionPaused) {
+    return;
+  }
+
   const reversing =
     nextDirection.x === state.direction.x * -1 &&
     nextDirection.y === state.direction.y * -1;
